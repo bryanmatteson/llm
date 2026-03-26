@@ -40,11 +40,13 @@ async fn run(id: &str) -> Result<()> {
     let answers = run_terminal_questionnaire(&questionnaire)?;
 
     eprintln!();
-    eprintln!("Questionnaire complete! Collected {} answers.", answers.len());
+    eprintln!(
+        "Questionnaire complete! Collected {} answers.",
+        answers.len()
+    );
 
     // Print the results as JSON.
-    let json = serde_json::to_string_pretty(&answers)
-        .unwrap_or_else(|_| format!("{answers:?}"));
+    let json = serde_json::to_string_pretty(&answers).unwrap_or_else(|_| format!("{answers:?}"));
     println!("{json}");
 
     Ok(())

@@ -1,8 +1,6 @@
 use std::sync::LazyLock;
 
-use llm_core::{
-    Metadata, ModelId, ProviderCapability, ProviderDescriptor, ProviderId,
-};
+use llm_core::{Metadata, ModelId, ProviderCapability, ProviderDescriptor, ProviderId};
 
 /// Provider identifier used across the framework.
 pub static PROVIDER_ID: LazyLock<ProviderId> = LazyLock::new(|| ProviderId::new("openai"));

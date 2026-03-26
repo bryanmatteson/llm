@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use llm_auth::{AuthProvider, AuthSession};
-use llm_core::{ModelId, ProviderId, ProviderDescriptor, Result};
+use llm_core::{ModelId, ProviderDescriptor, ProviderId, Result};
 use llm_provider_api::{LlmProviderClient, ToolSchemaAdapter};
 
 // ── ProviderClientFactory ──────────────────────────────────────────
@@ -73,11 +73,8 @@ impl ProviderRegistry {
     /// Return the descriptors for every registered provider, sorted by
     /// provider id for deterministic output.
     pub fn list_providers(&self) -> Vec<&ProviderDescriptor> {
-        let mut descriptors: Vec<&ProviderDescriptor> = self
-            .providers
-            .values()
-            .map(|r| &r.descriptor)
-            .collect();
+        let mut descriptors: Vec<&ProviderDescriptor> =
+            self.providers.values().map(|r| &r.descriptor).collect();
         descriptors.sort_by(|a, b| a.id.cmp(&b.id));
         descriptors
     }

@@ -8,5 +8,5 @@ pub mod wire;
 
 pub use auth::OpenAiAuthProvider;
 pub use client::OpenAiClient;
-pub use descriptor::{provider_descriptor, API_BASE, DEFAULT_MODEL, OPENAI_CLIENT_ID, PROVIDER_ID};
+pub use descriptor::{API_BASE, DEFAULT_MODEL, OPENAI_CLIENT_ID, PROVIDER_ID, provider_descriptor};
 pub use tools::OpenAiToolFormat;

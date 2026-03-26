@@ -38,8 +38,13 @@ impl ConversationState {
     }
 
     /// Append a tool result message.
-    pub fn append_tool_result(&mut self, tool_use_id: impl Into<String>, content: impl Into<String>) {
-        self.messages.push(Message::tool_result(tool_use_id, content));
+    pub fn append_tool_result(
+        &mut self,
+        tool_use_id: impl Into<String>,
+        content: impl Into<String>,
+    ) {
+        self.messages
+            .push(Message::tool_result(tool_use_id, content));
     }
 
     /// Append a raw [`Message`] directly.

@@ -244,9 +244,7 @@ mod tests {
                 max_calls_per_session: None,
             }],
         };
-        let config = SessionBuilder::new("openai")
-            .tool_policy(policy)
-            .build();
+        let config = SessionBuilder::new("openai").tool_policy(policy).build();
 
         assert_eq!(config.tool_policy.default_approval, ToolApproval::Deny);
         assert_eq!(config.tool_policy.rules.len(), 1);

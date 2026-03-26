@@ -94,7 +94,9 @@ mod tests {
                     id: QuestionId::new("agree"),
                     label: "Do you agree?".into(),
                     help_text: None,
-                    kind: QuestionKind::YesNo { default: Some(true) },
+                    kind: QuestionKind::YesNo {
+                        default: Some(true),
+                    },
                     required: true,
                     validation: vec![],
                     condition: None,

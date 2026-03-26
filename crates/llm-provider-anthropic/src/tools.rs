@@ -64,7 +64,10 @@ impl ToolSchemaAdapter for AnthropicToolFormat {
                 }
                 let id = block.get("id")?.as_str()?.to_owned();
                 let name = block.get("name")?.as_str()?.to_owned();
-                let arguments = block.get("input").cloned().unwrap_or(Value::Object(Default::default()));
+                let arguments = block
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
                 Some(ProviderToolCall {
                     id,
                     name,

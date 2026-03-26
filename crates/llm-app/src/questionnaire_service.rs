@@ -17,13 +17,9 @@ impl QuestionnaireService {
     ///
     /// The questionnaire schema is validated up front; validation errors are
     /// mapped to a [`FrameworkError`](llm_core::FrameworkError).
-    pub fn start_questionnaire(
-        &self,
-        questionnaire: Questionnaire,
-    ) -> Result<QuestionnaireRun> {
-        QuestionnaireRun::new(questionnaire).map_err(|errors| {
-            llm_core::FrameworkError::questionnaire(errors.join("; "))
-        })
+    pub fn start_questionnaire(&self, questionnaire: Questionnaire) -> Result<QuestionnaireRun> {
+        QuestionnaireRun::new(questionnaire)
+            .map_err(|errors| llm_core::FrameworkError::questionnaire(errors.join("; ")))
     }
 
     /// Convert a completed set of questionnaire answers into a

@@ -186,8 +186,7 @@ where
 
         let output = self.execute(typed_input, context).await?;
 
-        serde_json::to_value(output).map_err(|e| {
-            FrameworkError::tool(info.id, format!("failed to serialize output: {e}"))
-        })
+        serde_json::to_value(output)
+            .map_err(|e| FrameworkError::tool(info.id, format!("failed to serialize output: {e}")))
     }
 }

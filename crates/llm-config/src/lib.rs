@@ -47,8 +47,7 @@ mod tests {
             }],
         };
 
-        let toml_str =
-            toml::to_string_pretty(&config).expect("failed to serialize config to TOML");
+        let toml_str = toml::to_string_pretty(&config).expect("failed to serialize config to TOML");
         let deserialized: AppConfig =
             toml::from_str(&toml_str).expect("failed to deserialize config from TOML");
 

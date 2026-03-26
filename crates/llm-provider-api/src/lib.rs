@@ -23,7 +23,10 @@ mod tests {
             temperature: Some(0.7),
         };
 
-        assert_eq!(request.system_prompt.as_deref(), Some("You are a helpful assistant."));
+        assert_eq!(
+            request.system_prompt.as_deref(),
+            Some("You are a helpful assistant.")
+        );
         assert_eq!(request.messages.len(), 1);
         assert_eq!(request.model.as_ref().unwrap().as_str(), "gpt-4o");
         assert_eq!(request.max_tokens, Some(1024));

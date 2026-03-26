@@ -2,8 +2,12 @@ use std::collections::HashMap;
 
 use tokio_stream::StreamExt;
 
-use llm_core::{ContentBlock, FrameworkError, Message, ModelId, Result, Role, StopReason, TokenUsage};
-use llm_provider_api::{LlmProviderClient, ProviderEvent, ProviderToolDescriptor, ToolSchemaAdapter, TurnRequest};
+use llm_core::{
+    ContentBlock, FrameworkError, Message, ModelId, Result, Role, StopReason, TokenUsage,
+};
+use llm_provider_api::{
+    LlmProviderClient, ProviderEvent, ProviderToolDescriptor, ToolSchemaAdapter, TurnRequest,
+};
 use llm_tools::{ToolApproval, ToolContext, ToolRegistry};
 
 use crate::approval::{ApprovalHandler, ApprovalRequest, ApprovalResponse};
@@ -144,12 +148,7 @@ async fn execute_tool_calls(
             None => {
                 let err_msg = format!("Tool '{tool_name}' is not available.");
                 ctx.conversation.append_tool_result(call_id, &err_msg);
-                emit(
-                    ctx.event_tx,
-                    SessionEvent::Error {
-                        message: err_msg,
-                    },
-                );
+                emit(ctx.event_tx, SessionEvent::Error { message: err_msg });
                 total_made += 1;
                 tool_calls_this_turn += 1;
                 continue;
@@ -165,12 +164,7 @@ async fn execute_tool_calls(
             ToolApproval::Deny => {
                 let deny_msg = format!("Tool '{tool_name}' is denied by policy.");
                 ctx.conversation.append_tool_result(call_id, &deny_msg);
-                emit(
-                    ctx.event_tx,
-                    SessionEvent::Error {
-                        message: deny_msg,
-                    },
-                );
+                emit(ctx.event_tx, SessionEvent::Error { message: deny_msg });
                 total_made += 1;
                 tool_calls_this_turn += 1;
                 continue;
@@ -185,7 +179,8 @@ async fn execute_tool_calls(
                     },
                 );
 
-                let approval_resp = ctx.approval_handler
+                let approval_resp = ctx
+                    .approval_handler
                     .request_approval(ApprovalRequest {
                         call_id: call_id.clone(),
                         tool_name: tool_name.clone(),
@@ -198,9 +193,8 @@ async fn execute_tool_calls(
                         // Fall through to execution below.
                     }
                     ApprovalResponse::Deny { reason } => {
-                        let deny_msg = reason.unwrap_or_else(|| {
-                            format!("User denied tool call '{tool_name}'.")
-                        });
+                        let deny_msg = reason
+                            .unwrap_or_else(|| format!("User denied tool call '{tool_name}'."));
                         ctx.conversation.append_tool_result(call_id, &deny_msg);
                         total_made += 1;
                         tool_calls_this_turn += 1;
@@ -230,18 +224,18 @@ async fn execute_tool_calls(
             Ok(result) => result,
             Err(_) => Err(FrameworkError::tool(
                 descriptor.id.clone(),
-                format!("execution timed out after {:?}", ctx.config.limits.tool_timeout),
+                format!(
+                    "execution timed out after {:?}",
+                    ctx.config.limits.tool_timeout
+                ),
             )),
         };
 
         let (content, summary) = match exec_result {
             Ok(value) => {
-                let content_str = serde_json::to_string(&value)
-                    .unwrap_or_else(|_| value.to_string());
-                let summary = content_str
-                    .chars()
-                    .take(120)
-                    .collect::<String>();
+                let content_str =
+                    serde_json::to_string(&value).unwrap_or_else(|_| value.to_string());
+                let summary = content_str.chars().take(120).collect::<String>();
                 (content_str, summary)
             }
             Err(e) => {
@@ -290,7 +284,8 @@ pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> 
     // reported model.  The initial value is only used if the loop exits
     // without completing a single turn (which cannot happen given
     // max_turns >= 1), but we need a value to satisfy the compiler.
-    let mut last_model = ctx.config
+    let mut last_model = ctx
+        .config
         .model
         .clone()
         .unwrap_or_else(|| ModelId::new("unknown"));
@@ -306,9 +301,12 @@ pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> 
             ctx.client.send_turn(&request),
         )
         .await
-        .map_err(|_| FrameworkError::session(format!(
-            "turn timed out after {:?}", ctx.config.limits.turn_timeout
-        )))??;
+        .map_err(|_| {
+            FrameworkError::session(format!(
+                "turn timed out after {:?}",
+                ctx.config.limits.turn_timeout
+            ))
+        })??;
 
         // Accumulate usage.
         aggregated_usage.input_tokens += response.usage.input_tokens;
@@ -351,12 +349,7 @@ pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> 
                     });
                 }
 
-                let result = execute_tool_calls(
-                    &calls,
-                    &mut ctx,
-                    &last_model,
-                )
-                .await?;
+                let result = execute_tool_calls(&calls, &mut ctx, &last_model).await?;
                 total_tool_calls += result.calls_made;
 
                 // Continue the loop -- the provider needs to see the tool
@@ -483,7 +476,8 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
 
     let mut total_tool_calls: usize = 0;
     let mut aggregated_usage = TokenUsage::default();
-    let mut last_model = ctx.config
+    let mut last_model = ctx
+        .config
         .model
         .clone()
         .unwrap_or_else(|| ModelId::new("unknown"));
@@ -492,29 +486,20 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
     for turn_index in 0..ctx.config.limits.max_turns {
         let request = build_turn_request(ctx.conversation, ctx.config, &tool_descriptors_json);
 
-        // Attempt to open a stream.  On `Unsupported`, fall back to the
-        // blocking `send_turn` path for this turn.
+        // A single timeout wraps both stream creation AND consumption so
+        // the total wall-clock budget for one turn is exactly `turn_timeout`.
         let stream_result = tokio::time::timeout(
             ctx.config.limits.turn_timeout,
-            ctx.client.stream_turn(&request),
+            async {
+                let stream = ctx.client.stream_turn(&request).await?;
+                consume_stream(stream, ctx.event_tx).await
+            },
         )
-        .await
-        .map_err(|_| FrameworkError::session(format!(
-            "turn timed out after {:?}", ctx.config.limits.turn_timeout
-        )))?;
+        .await;
 
         let (turn_text, turn_tool_calls, turn_usage, turn_stop_reason, turn_model) =
             match stream_result {
-                Ok(stream) => {
-                    // Consume the stream within the turn timeout.
-                    let acc = tokio::time::timeout(
-                        ctx.config.limits.turn_timeout,
-                        consume_stream(stream, ctx.event_tx),
-                    )
-                    .await
-                    .map_err(|_| FrameworkError::session(format!(
-                        "streaming turn timed out after {:?}", ctx.config.limits.turn_timeout
-                    )))??;
+                Ok(Ok(acc)) => {
 
                     let text = acc.text.clone();
                     let tool_calls = acc.tool_calls.clone();
@@ -528,16 +513,19 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
 
                     (text, tool_calls, usage, stop_reason, model)
                 }
-                Err(FrameworkError::Unsupported { .. }) => {
+                Ok(Err(FrameworkError::Unsupported { .. })) => {
                     // Graceful degradation: fall back to non-streaming.
                     let response = tokio::time::timeout(
                         ctx.config.limits.turn_timeout,
                         ctx.client.send_turn(&request),
                     )
                     .await
-                    .map_err(|_| FrameworkError::session(format!(
-                        "turn timed out after {:?}", ctx.config.limits.turn_timeout
-                    )))??;
+                    .map_err(|_| {
+                        FrameworkError::session(format!(
+                            "turn timed out after {:?}",
+                            ctx.config.limits.turn_timeout
+                        ))
+                    })??;
 
                     for msg in &response.messages {
                         ctx.conversation.append_message(msg.clone());
@@ -557,7 +545,13 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
                         Some(response.model),
                     )
                 }
-                Err(e) => return Err(e),
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(FrameworkError::session(format!(
+                        "streaming turn timed out after {:?}",
+                        ctx.config.limits.turn_timeout
+                    )));
+                }
             };
 
         // Accumulate usage.
@@ -588,12 +582,7 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
                     });
                 }
 
-                let result = execute_tool_calls(
-                    &turn_tool_calls,
-                    &mut ctx,
-                    &last_model,
-                )
-                .await?;
+                let result = execute_tool_calls(&turn_tool_calls, &mut ctx, &last_model).await?;
                 total_tool_calls += result.calls_made;
                 continue;
             }
@@ -653,7 +642,10 @@ async fn consume_stream(
                 acc.current_tool_names.insert(id.clone(), name);
                 acc.current_tool_args.insert(id, String::new());
             }
-            ProviderEvent::ToolCallDelta { id, arguments_delta } => {
+            ProviderEvent::ToolCallDelta {
+                id,
+                arguments_delta,
+            } => {
                 acc.current_tool_args
                     .entry(id)
                     .or_default()
@@ -737,7 +729,9 @@ mod tests {
             _request: &TurnRequest,
         ) -> llm_core::Result<Pin<Box<dyn Stream<Item = llm_core::Result<ProviderEvent>> + Send>>>
         {
-            Err(FrameworkError::unsupported("streaming not implemented in mock"))
+            Err(FrameworkError::unsupported(
+                "streaming not implemented in mock",
+            ))
         }
 
         async fn list_models(&self) -> llm_core::Result<Vec<ModelDescriptor>> {

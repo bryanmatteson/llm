@@ -57,7 +57,11 @@ mod tests {
         // The verifier should be decodable from URL-safe base64.
         let decoded = URL_SAFE_NO_PAD.decode(&pkce.verifier);
         assert!(decoded.is_ok(), "verifier should be valid base64url");
-        assert_eq!(decoded.unwrap().len(), 32, "verifier should decode to 32 bytes");
+        assert_eq!(
+            decoded.unwrap().len(),
+            32,
+            "verifier should decode to 32 bytes"
+        );
     }
 
     #[test]
@@ -82,7 +86,11 @@ mod tests {
         let state = generate_state();
         let decoded = URL_SAFE_NO_PAD.decode(&state);
         assert!(decoded.is_ok(), "state should be valid base64url");
-        assert_eq!(decoded.unwrap().len(), 16, "state should decode to 16 bytes");
+        assert_eq!(
+            decoded.unwrap().len(),
+            16,
+            "state should decode to 16 bytes"
+        );
     }
 
     #[test]

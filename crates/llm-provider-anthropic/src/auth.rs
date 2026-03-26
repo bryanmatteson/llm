@@ -123,10 +123,7 @@ impl AuthProvider for AnthropicAuthProvider {
         })
     }
 
-    async fn complete_login(
-        &self,
-        params: &Metadata,
-    ) -> Result<AuthCompletion, FrameworkError> {
+    async fn complete_login(&self, params: &Metadata) -> Result<AuthCompletion, FrameworkError> {
         // ── API-key path ────────────────────────────────────────────
         if let Some(api_key) = params.get("api_key") {
             let masked = if api_key.len() > 8 {
@@ -155,14 +152,9 @@ impl AuthProvider for AnthropicAuthProvider {
             .get("state")
             .ok_or_else(|| FrameworkError::auth("missing \"state\" parameter"))?;
 
-        let pkce = self
-            .pkce
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| {
-                FrameworkError::auth("no PKCE challenge found; was start_login called?")
-            })?;
+        let pkce = self.pkce.lock().unwrap().take().ok_or_else(|| {
+            FrameworkError::auth("no PKCE challenge found; was start_login called?")
+        })?;
 
         let endpoints = anthropic_endpoints();
         let redirect_uri = redirect_uri_for(&endpoints.redirect, 0);
@@ -186,9 +178,7 @@ impl AuthProvider for AnthropicAuthProvider {
             .map_err(|e| FrameworkError::auth(format!("token exchange returned error: {e}")))?
             .json()
             .await
-            .map_err(|e| {
-                FrameworkError::auth(format!("failed to parse token response: {e}"))
-            })?;
+            .map_err(|e| FrameworkError::auth(format!("failed to parse token response: {e}")))?;
 
         let expires_in = token_resp.expires_in.unwrap_or(3600) as i64;
 
@@ -239,9 +229,7 @@ impl AuthProvider for AnthropicAuthProvider {
             .map_err(|e| FrameworkError::auth(format!("refresh returned error: {e}")))?
             .json()
             .await
-            .map_err(|e| {
-                FrameworkError::auth(format!("failed to parse refresh response: {e}"))
-            })?;
+            .map_err(|e| FrameworkError::auth(format!("failed to parse refresh response: {e}")))?;
 
         let expires_in = token_resp.expires_in.unwrap_or(3600) as i64;
 

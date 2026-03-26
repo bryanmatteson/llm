@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionEvent {
     /// An incremental text chunk from the assistant.
-    AssistantDelta {
-        text: String,
-    },
+    AssistantDelta { text: String },
 
     /// The assistant has requested a tool call.
     ToolCallRequested {
@@ -39,14 +37,10 @@ pub enum SessionEvent {
     },
 
     /// The turn loop has exhausted its maximum turn budget.
-    TurnLimitReached {
-        turns_used: usize,
-    },
+    TurnLimitReached { turns_used: usize },
 
     /// An error occurred during the turn loop.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Channel sender for [`SessionEvent`]s.

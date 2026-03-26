@@ -1,16 +1,13 @@
 use std::io::{self, BufRead, Write};
 
 use llm_core::Result;
-use llm_questionnaire::{
-    AnswerMap, AnswerValue, QuestionKind, Questionnaire, QuestionnaireRun,
-};
+use llm_questionnaire::{AnswerMap, AnswerValue, QuestionKind, Questionnaire, QuestionnaireRun};
 
 /// Drive a [`Questionnaire`] interactively on the terminal, returning the
 /// collected answers.
 pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<AnswerMap> {
-    let mut run = QuestionnaireRun::new(questionnaire.clone()).map_err(|errs| {
-        llm_core::FrameworkError::questionnaire(errs.join("; "))
-    })?;
+    let mut run = QuestionnaireRun::new(questionnaire.clone())
+        .map_err(|errs| llm_core::FrameworkError::questionnaire(errs.join("; ")))?;
 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
@@ -75,16 +72,14 @@ fn prompt_choice(
             eprintln!("  {}: {}{}", i + 1, opt.label, marker);
         }
 
-        let default_hint = default
-            .map(|d| format!(" [{d}]"))
-            .unwrap_or_default();
+        let default_hint = default.map(|d| format!(" [{d}]")).unwrap_or_default();
         eprint!("Choice{default_hint}: ");
         io::stderr().flush().ok();
 
         let mut input = String::new();
-        reader.read_line(&mut input).map_err(|e| {
-            llm_core::FrameworkError::questionnaire(format!("read error: {e}"))
-        })?;
+        reader
+            .read_line(&mut input)
+            .map_err(|e| llm_core::FrameworkError::questionnaire(format!("read error: {e}")))?;
         let trimmed = input.trim();
 
         // Empty input -> use default if available.
@@ -127,9 +122,9 @@ fn prompt_yes_no(
         io::stderr().flush().ok();
 
         let mut input = String::new();
-        reader.read_line(&mut input).map_err(|e| {
-            llm_core::FrameworkError::questionnaire(format!("read error: {e}"))
-        })?;
+        reader
+            .read_line(&mut input)
+            .map_err(|e| llm_core::FrameworkError::questionnaire(format!("read error: {e}")))?;
         let trimmed = input.trim().to_lowercase();
 
         if trimmed.is_empty() {
@@ -155,16 +150,14 @@ fn prompt_text(
     placeholder: Option<&str>,
     reader: &mut impl BufRead,
 ) -> Result<AnswerValue> {
-    let hint = placeholder
-        .map(|p| format!(" ({p})"))
-        .unwrap_or_default();
+    let hint = placeholder.map(|p| format!(" ({p})")).unwrap_or_default();
     eprint!("{label}{hint}: ");
     io::stderr().flush().ok();
 
     let mut input = String::new();
-    reader.read_line(&mut input).map_err(|e| {
-        llm_core::FrameworkError::questionnaire(format!("read error: {e}"))
-    })?;
+    reader
+        .read_line(&mut input)
+        .map_err(|e| llm_core::FrameworkError::questionnaire(format!("read error: {e}")))?;
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
@@ -195,9 +188,9 @@ fn prompt_number(
         io::stderr().flush().ok();
 
         let mut input = String::new();
-        reader.read_line(&mut input).map_err(|e| {
-            llm_core::FrameworkError::questionnaire(format!("read error: {e}"))
-        })?;
+        reader
+            .read_line(&mut input)
+            .map_err(|e| llm_core::FrameworkError::questionnaire(format!("read error: {e}")))?;
         let trimmed = input.trim();
 
         if trimmed.is_empty() {
@@ -244,9 +237,9 @@ fn prompt_multi_select(
     io::stderr().flush().ok();
 
     let mut input = String::new();
-    reader.read_line(&mut input).map_err(|e| {
-        llm_core::FrameworkError::questionnaire(format!("read error: {e}"))
-    })?;
+    reader
+        .read_line(&mut input)
+        .map_err(|e| llm_core::FrameworkError::questionnaire(format!("read error: {e}")))?;
     let trimmed = input.trim();
 
     if trimmed.is_empty() {

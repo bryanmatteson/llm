@@ -276,7 +276,10 @@ mod tests {
 
         let resp: GenerateContentResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.candidates.len(), 1);
-        assert_eq!(resp.candidates[0].content.parts[0].text.as_deref(), Some("Hello there!"));
+        assert_eq!(
+            resp.candidates[0].content.parts[0].text.as_deref(),
+            Some("Hello there!")
+        );
         assert_eq!(resp.candidates[0].finish_reason.as_deref(), Some("STOP"));
         let usage = resp.usage_metadata.as_ref().unwrap();
         assert_eq!(usage.prompt_token_count, 10);
@@ -401,7 +404,10 @@ mod tests {
         let resp: ModelListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.models.len(), 2);
         assert_eq!(resp.models[0].name, "models/gemini-2.5-flash");
-        assert_eq!(resp.models[0].display_name.as_deref(), Some("Gemini 2.5 Flash"));
+        assert_eq!(
+            resp.models[0].display_name.as_deref(),
+            Some("Gemini 2.5 Flash")
+        );
         assert_eq!(resp.models[0].input_token_limit, Some(1048576));
         assert_eq!(resp.models[1].name, "models/gemini-2.5-pro");
         assert!(resp.models[1].input_token_limit.is_none());

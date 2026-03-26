@@ -1,8 +1,8 @@
 use llm_core::FrameworkError;
 use url::Url;
 
-use super::primitives::{OAuthEndpoints, OAuthTokenResponse, RedirectStrategy};
 use super::pkce::PkceChallenge;
+use super::primitives::{OAuthEndpoints, OAuthTokenResponse, RedirectStrategy};
 
 /// Async trait for performing an OAuth 2.0 authorization-code flow.
 ///

@@ -33,11 +33,7 @@ impl AnthropicClient {
     /// * `model`        - the model id to use (e.g. `"claude-sonnet-4-20250514"`).
     /// * `base_url`     - optional API base URL override. If `None`, uses the
     ///   default Anthropic API base.
-    pub fn new(
-        auth_session: AuthSession,
-        model: ModelId,
-        base_url: Option<String>,
-    ) -> Self {
+    pub fn new(auth_session: AuthSession, model: ModelId, base_url: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             auth_session,
@@ -74,9 +70,10 @@ impl AnthropicClient {
         };
 
         // Check if this is a tool-result message.
-        let has_tool_result = msg.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolResult { .. })
-        });
+        let has_tool_result = msg
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
         if has_tool_result {
             // Tool results are sent as user messages with tool_result content blocks.
@@ -102,9 +99,10 @@ impl AnthropicClient {
         }
 
         // Check if the assistant message has tool-use blocks.
-        let has_tool_use = msg.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolUse { .. })
-        });
+        let has_tool_use = msg
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolUse { .. }));
 
         if has_tool_use {
             // Assistant messages with tool_use need content blocks.
@@ -228,18 +226,11 @@ impl LlmProviderClient for AnthropicClient {
         }
 
         // ── Build messages ──────────────────────────────────────────
-        let wire_messages: Vec<WireMessage> = request
-            .messages
-            .iter()
-            .map(Self::message_to_wire)
-            .collect();
+        let wire_messages: Vec<WireMessage> =
+            request.messages.iter().map(Self::message_to_wire).collect();
 
         // ── Build request body ──────────────────────────────────────
-        let model = request
-            .model
-            .as_ref()
-            .unwrap_or(&self.model)
-            .to_string();
+        let model = request.model.as_ref().unwrap_or(&self.model).to_string();
 
         let max_tokens = request.max_tokens.unwrap_or(4096);
 
@@ -263,16 +254,9 @@ impl LlmProviderClient for AnthropicClient {
 
         let builder = self.apply_auth(builder);
 
-        let resp = builder
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("request failed: {e}"),
-                )
-            })?;
+        let resp = builder.json(&body).send().await.map_err(|e| {
+            llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
+        })?;
 
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
@@ -486,10 +470,7 @@ mod tests {
             AnthropicClient::map_stop_reason(Some("stop_sequence")),
             StopReason::Stop
         );
-        assert_eq!(
-            AnthropicClient::map_stop_reason(None),
-            StopReason::EndTurn
-        );
+        assert_eq!(AnthropicClient::map_stop_reason(None), StopReason::EndTurn);
         assert_eq!(
             AnthropicClient::map_stop_reason(Some("unknown")),
             StopReason::EndTurn

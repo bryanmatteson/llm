@@ -58,7 +58,9 @@ pub mod test_utils {
         }
 
         async fn execute(&self, input: EchoInput, _ctx: &ToolContext) -> Result<EchoOutput> {
-            Ok(EchoOutput { echoed: input.message })
+            Ok(EchoOutput {
+                echoed: input.message,
+            })
         }
     }
 }
@@ -132,7 +134,10 @@ mod tests {
     #[test]
     fn registry_register_and_get() {
         let mut reg = ToolRegistry::new();
-        let tool: Arc<dyn DynTool> = Arc::new(StubTool { id: "a", wire: "wire_a" });
+        let tool: Arc<dyn DynTool> = Arc::new(StubTool {
+            id: "a",
+            wire: "wire_a",
+        });
         reg.register(tool);
 
         assert!(reg.get(&ToolId::new("a")).is_some());
@@ -142,8 +147,14 @@ mod tests {
     #[test]
     fn registry_get_by_wire_name() {
         let mut reg = ToolRegistry::new();
-        reg.register(Arc::new(StubTool { id: "a", wire: "wire_a" }));
-        reg.register(Arc::new(StubTool { id: "b", wire: "wire_b" }));
+        reg.register(Arc::new(StubTool {
+            id: "a",
+            wire: "wire_a",
+        }));
+        reg.register(Arc::new(StubTool {
+            id: "b",
+            wire: "wire_b",
+        }));
 
         let found = reg.get_by_wire_name("wire_b");
         assert!(found.is_some());
@@ -155,8 +166,14 @@ mod tests {
     #[test]
     fn registry_all_descriptors_sorted() {
         let mut reg = ToolRegistry::new();
-        reg.register(Arc::new(StubTool { id: "z_tool", wire: "wz" }));
-        reg.register(Arc::new(StubTool { id: "a_tool", wire: "wa" }));
+        reg.register(Arc::new(StubTool {
+            id: "z_tool",
+            wire: "wz",
+        }));
+        reg.register(Arc::new(StubTool {
+            id: "a_tool",
+            wire: "wa",
+        }));
 
         let descs = reg.all_descriptors();
         assert_eq!(descs.len(), 2);
@@ -167,8 +184,14 @@ mod tests {
     #[test]
     fn registry_tool_ids() {
         let mut reg = ToolRegistry::new();
-        reg.register(Arc::new(StubTool { id: "c", wire: "wc" }));
-        reg.register(Arc::new(StubTool { id: "a", wire: "wa" }));
+        reg.register(Arc::new(StubTool {
+            id: "c",
+            wire: "wc",
+        }));
+        reg.register(Arc::new(StubTool {
+            id: "a",
+            wire: "wa",
+        }));
 
         let ids = reg.tool_ids();
         assert_eq!(ids, vec![ToolId::new("a"), ToolId::new("c")]);
@@ -206,12 +229,18 @@ mod tests {
             ],
         };
 
-        assert_eq!(policy.approval_for(&ToolId::new("dangerous")), ToolApproval::Deny);
+        assert_eq!(
+            policy.approval_for(&ToolId::new("dangerous")),
+            ToolApproval::Deny
+        );
         assert_eq!(
             policy.approval_for(&ToolId::new("sensitive")),
             ToolApproval::RequireConfirmation
         );
-        assert_eq!(policy.approval_for(&ToolId::new("normal")), ToolApproval::Auto);
+        assert_eq!(
+            policy.approval_for(&ToolId::new("normal")),
+            ToolApproval::Auto
+        );
     }
 
     #[test]
@@ -268,26 +297,46 @@ mod tests {
 
         assert_eq!(policy.default_approval, ToolApproval::RequireConfirmation);
         assert_eq!(policy.rules.len(), 5);
-        assert_eq!(policy.approval_for(&ToolId::new("search")), ToolApproval::Auto);
-        assert_eq!(policy.approval_for(&ToolId::new("dangerous")), ToolApproval::Deny);
-        assert_eq!(policy.approval_for(&ToolId::new("file_write")), ToolApproval::RequireConfirmation);
-        assert_eq!(policy.approval_for(&ToolId::new("exec")), ToolApproval::RequireConfirmation);
-        assert_eq!(policy.approval_for(&ToolId::new("unknown")), ToolApproval::RequireConfirmation);
+        assert_eq!(
+            policy.approval_for(&ToolId::new("search")),
+            ToolApproval::Auto
+        );
+        assert_eq!(
+            policy.approval_for(&ToolId::new("dangerous")),
+            ToolApproval::Deny
+        );
+        assert_eq!(
+            policy.approval_for(&ToolId::new("file_write")),
+            ToolApproval::RequireConfirmation
+        );
+        assert_eq!(
+            policy.approval_for(&ToolId::new("exec")),
+            ToolApproval::RequireConfirmation
+        );
+        assert_eq!(
+            policy.approval_for(&ToolId::new("unknown")),
+            ToolApproval::RequireConfirmation
+        );
 
-        let exec_rule = policy.rules.iter().find(|r| r.tool_id == ToolId::new("exec")).unwrap();
+        let exec_rule = policy
+            .rules
+            .iter()
+            .find(|r| r.tool_id == ToolId::new("exec"))
+            .unwrap();
         assert_eq!(exec_rule.max_calls_per_session, Some(3));
 
-        let read_rule = policy.rules.iter().find(|r| r.tool_id == ToolId::new("read")).unwrap();
+        let read_rule = policy
+            .rules
+            .iter()
+            .find(|r| r.tool_id == ToolId::new("read"))
+            .unwrap();
         assert_eq!(read_rule.max_calls_per_session, Some(10));
     }
 
     #[test]
     fn policy_builder_serde_roundtrip() {
         use crate::policy::ToolPolicyBuilder;
-        let policy = ToolPolicyBuilder::new()
-            .allow("a")
-            .deny("b")
-            .build();
+        let policy = ToolPolicyBuilder::new().allow("a").deny("b").build();
         let json = serde_json::to_string(&policy).unwrap();
         let back: ToolPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(back, policy);
@@ -317,7 +366,10 @@ mod tests {
         let tool = StubTool { id: "t", wire: "w" };
         let desc = tool.descriptor();
         let schema_str = serde_json::to_string(&desc.parameters).unwrap();
-        assert!(schema_str.contains("\"x\""), "schema should contain the 'x' property");
+        assert!(
+            schema_str.contains("\"x\""),
+            "schema should contain the 'x' property"
+        );
     }
 
     // -- validate_tool_input -------------------------------------------------
@@ -357,7 +409,10 @@ mod tests {
         async fn echo_execute() {
             let tool = EchoTool;
             let ctx = make_context();
-            let result = tool.invoke(json!({"message": "hello"}), &ctx).await.unwrap();
+            let result = tool
+                .invoke(json!({"message": "hello"}), &ctx)
+                .await
+                .unwrap();
             assert_eq!(result, json!({"echoed": "hello"}));
         }
 

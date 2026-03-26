@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use chrono::Utc;
-use llm_core::{FrameworkError, ModelId, Result, SessionId, TokenUsage};
+use llm_core::{FrameworkError, Result, SessionId, TokenUsage};
 use llm_store::{SessionSnapshot, SessionStore};
 
 use crate::config::SessionConfig;
@@ -37,9 +37,6 @@ pub trait SessionManager: Send + Sync {
 }
 
 /// Default [`SessionManager`] implementation backed by a [`SessionStore`].
-///
-/// Session IDs are generated as random UUIDs (v4-style, using the `fastrand`
-/// crate to avoid a dependency on `uuid`).
 pub struct DefaultSessionManager {
     store: Arc<dyn SessionStore>,
 }
@@ -57,7 +54,6 @@ impl DefaultSessionManager {
         Self { store }
     }
 
-    /// Generate a pseudo-random UUID-v4-style session id.
     fn generate_id() -> SessionId {
         let a: u64 = fastrand::u64(..);
         let b: u64 = fastrand::u64(..);
@@ -77,10 +73,7 @@ impl SessionManager for DefaultSessionManager {
         };
         let snapshot = SessionSnapshot {
             id: handle.id.clone(),
-            provider_id: handle.config.provider_id.clone(),
-            model: handle.config.model.clone().unwrap_or_else(|| ModelId::new("unknown")),
-            system_prompt: handle.config.system_prompt.clone(),
-            metadata: handle.config.metadata.clone(),
+            config: handle.config.clone(),
             messages: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -93,23 +86,13 @@ impl SessionManager for DefaultSessionManager {
         let snapshot = self.store.load_session(id).await?;
         match snapshot {
             Some(snap) => {
-                // Reconstruct a SessionHandle from the persisted snapshot.
-                // We build a minimal config from what the snapshot recorded.
-                let config = SessionConfig {
-                    provider_id: snap.provider_id,
-                    model: Some(snap.model),
-                    system_prompt: snap.system_prompt,
-                    tool_policy: Default::default(),
-                    limits: Default::default(),
-                    metadata: snap.metadata,
-                };
                 let mut conversation = ConversationState::new();
                 for msg in snap.messages {
                     conversation.append_message(msg);
                 }
                 Ok(Some(SessionHandle {
                     id: snap.id,
-                    config,
+                    config: snap.config,
                     conversation,
                     total_usage: TokenUsage::default(),
                 }))

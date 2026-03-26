@@ -76,9 +76,7 @@ impl SessionService {
         let registration = self
             .provider_registry
             .get(provider_id)
-            .ok_or_else(|| {
-                FrameworkError::session(format!("unknown provider: {provider_id}"))
-            })?;
+            .ok_or_else(|| FrameworkError::session(format!("unknown provider: {provider_id}")))?;
 
         let model = config
             .model
@@ -113,17 +111,13 @@ impl SessionService {
             .session_manager
             .get_session(session_id)
             .await?
-            .ok_or_else(|| {
-                FrameworkError::session(format!("session not found: {session_id}"))
-            })?;
+            .ok_or_else(|| FrameworkError::session(format!("session not found: {session_id}")))?;
 
         let provider_id = &handle.config.provider_id;
         let registration = self
             .provider_registry
             .get(provider_id)
-            .ok_or_else(|| {
-                FrameworkError::session(format!("unknown provider: {provider_id}"))
-            })?;
+            .ok_or_else(|| FrameworkError::session(format!("unknown provider: {provider_id}")))?;
 
         let model = handle
             .config
@@ -137,9 +131,7 @@ impl SessionService {
             .await?;
 
         // Append the user message to the conversation.
-        handle
-            .conversation
-            .append_message(Message::user(text));
+        handle.conversation.append_message(Message::user(text));
 
         let (tx, _rx) = event_channel();
         let approval_handler = AutoApproveHandler;

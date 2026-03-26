@@ -1,7 +1,7 @@
 use llm_auth::{
     AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, OAuthEndpoints,
-    OAuthTokenResponse, PkceChallenge, RedirectStrategy, TokenPair, build_auth_url,
-    generate_state, redirect_uri_for,
+    OAuthTokenResponse, PkceChallenge, RedirectStrategy, TokenPair, build_auth_url, generate_state,
+    redirect_uri_for,
 };
 use llm_core::{FrameworkError, Metadata, ProviderId};
 
@@ -117,13 +117,7 @@ impl AuthProvider for GoogleAuthProvider {
         // tell `complete_login` which port was used via the `redirect_uri` param.
         let redirect_uri = redirect_uri_for(&endpoints.redirect, 0);
 
-        let url = build_auth_url(
-            &endpoints,
-            GOOGLE_CLIENT_ID,
-            &redirect_uri,
-            &pkce,
-            &state,
-        )?;
+        let url = build_auth_url(&endpoints, GOOGLE_CLIENT_ID, &redirect_uri, &pkce, &state)?;
 
         // Stash the PKCE verifier so `complete_login` can use it.
         *self.pkce.lock().unwrap() = Some(pkce);
@@ -136,10 +130,7 @@ impl AuthProvider for GoogleAuthProvider {
         })
     }
 
-    async fn complete_login(
-        &self,
-        params: &Metadata,
-    ) -> Result<AuthCompletion, FrameworkError> {
+    async fn complete_login(&self, params: &Metadata) -> Result<AuthCompletion, FrameworkError> {
         // ── API-key path ────────────────────────────────────────────
         if let Some(api_key) = params.get("api_key") {
             let masked = if api_key.len() > 8 {
@@ -168,12 +159,9 @@ impl AuthProvider for GoogleAuthProvider {
             .get("state")
             .ok_or_else(|| FrameworkError::auth("missing \"state\" parameter"))?;
 
-        let pkce = self
-            .pkce
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| FrameworkError::auth("no PKCE challenge found; was start_login called?"))?;
+        let pkce = self.pkce.lock().unwrap().take().ok_or_else(|| {
+            FrameworkError::auth("no PKCE challenge found; was start_login called?")
+        })?;
 
         let endpoints = google_endpoints();
 

@@ -57,8 +57,7 @@ impl AuthService {
             .get(provider_id)
             .ok_or_else(|| FrameworkError::auth(format!("unknown provider: {provider_id}")))?;
 
-        let AuthCompletion { session } =
-            registration.auth_provider.complete_login(params).await?;
+        let AuthCompletion { session } = registration.auth_provider.complete_login(params).await?;
 
         // Persist the auth session.
         self.credential_store
@@ -108,10 +107,7 @@ impl AuthService {
     ///
     /// Returns `None` if no session is stored or if the stored session fails
     /// validation.
-    pub async fn discover_session(
-        &self,
-        provider_id: &ProviderId,
-    ) -> Result<Option<AuthSession>> {
+    pub async fn discover_session(&self, provider_id: &ProviderId) -> Result<Option<AuthSession>> {
         let registration = self
             .provider_registry
             .get(provider_id)
@@ -124,11 +120,7 @@ impl AuthService {
 
         // Validate the stored session.
         let valid = registration.auth_provider.validate(&session).await?;
-        if valid {
-            Ok(Some(session))
-        } else {
-            Ok(None)
-        }
+        if valid { Ok(Some(session)) } else { Ok(None) }
     }
 
     /// List all stored account records.
@@ -137,10 +129,7 @@ impl AuthService {
     }
 
     /// Return a summary of what credentials are available for a provider.
-    pub async fn credential_status(
-        &self,
-        provider_id: &ProviderId,
-    ) -> Result<CredentialStatus> {
+    pub async fn credential_status(&self, provider_id: &ProviderId) -> Result<CredentialStatus> {
         self.credential_store.credential_status(provider_id).await
     }
 }

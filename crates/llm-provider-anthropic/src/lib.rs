@@ -8,5 +8,7 @@ pub mod wire;
 
 pub use auth::AnthropicAuthProvider;
 pub use client::AnthropicClient;
-pub use descriptor::{provider_descriptor, API_BASE, ANTHROPIC_CLIENT_ID, DEFAULT_MODEL, PROVIDER_ID};
+pub use descriptor::{
+    ANTHROPIC_CLIENT_ID, API_BASE, DEFAULT_MODEL, PROVIDER_ID, provider_descriptor,
+};
 pub use tools::AnthropicToolFormat;

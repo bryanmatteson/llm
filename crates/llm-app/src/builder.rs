@@ -161,11 +161,7 @@ impl AppBuilder {
 
         // -- Services --------------------------------------------------------
 
-        let auth = AuthService::new(
-            Arc::clone(&registry),
-            credential_store,
-            account_store,
-        );
+        let auth = AuthService::new(Arc::clone(&registry), credential_store, account_store);
 
         let sessions = SessionService::new(
             Arc::clone(&registry),
@@ -173,7 +169,9 @@ impl AppBuilder {
             Arc::clone(&tool_registry),
             self.config.as_ref().map(|c| c.session_defaults.clone()),
             default_tool_policy,
-            self.config.as_ref().and_then(|c| c.default_provider.clone()),
+            self.config
+                .as_ref()
+                .and_then(|c| c.default_provider.clone()),
         );
 
         let questionnaires = QuestionnaireService::new();

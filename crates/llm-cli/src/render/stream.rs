@@ -47,11 +47,7 @@ pub async fn render_session_events(rx: &mut EventReceiver) {
                 writeln!(err, "[approval required for tool: {tool_name}]").ok();
             }
 
-            SessionEvent::TurnCompleted {
-                text,
-                model,
-                usage,
-            } => {
+            SessionEvent::TurnCompleted { text, model, usage } => {
                 // If streaming deltas were received, `text` duplicates what
                 // was already printed.  Only print it when no deltas arrived.
                 if !received_deltas {

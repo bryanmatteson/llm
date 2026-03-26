@@ -83,9 +83,10 @@ async fn login(provider: &str, no_browser: bool, ctx: &AppContext) -> Result<()>
             io::stderr().flush().ok();
 
             let mut code = String::new();
-            io::stdin().lock().read_line(&mut code).map_err(|e| {
-                FrameworkError::auth(format!("failed to read code: {e}"))
-            })?;
+            io::stdin()
+                .lock()
+                .read_line(&mut code)
+                .map_err(|e| FrameworkError::auth(format!("failed to read code: {e}")))?;
             let code = code.trim().to_owned();
 
             let mut params = Metadata::new();
@@ -102,16 +103,15 @@ async fn login(provider: &str, no_browser: bool, ctx: &AppContext) -> Result<()>
             eprintln!("Logged in to {provider} successfully.");
         }
         llm_auth::AuthStart::ApiKeyPrompt { env_var_hint } => {
-            eprintln!(
-                "Enter your API key (hint: set {env_var_hint} to skip this prompt):"
-            );
+            eprintln!("Enter your API key (hint: set {env_var_hint} to skip this prompt):");
             eprint!("API key: ");
             io::stderr().flush().ok();
 
             let mut key = String::new();
-            io::stdin().lock().read_line(&mut key).map_err(|e| {
-                FrameworkError::auth(format!("failed to read API key: {e}"))
-            })?;
+            io::stdin()
+                .lock()
+                .read_line(&mut key)
+                .map_err(|e| FrameworkError::auth(format!("failed to read API key: {e}")))?;
             let key = key.trim().to_owned();
 
             let mut params = Metadata::new();
@@ -159,7 +159,11 @@ async fn logout(provider: &str, ctx: &AppContext) -> Result<()> {
         .ok_or_else(|| FrameworkError::auth(format!("unknown provider: {provider}")))?;
 
     // If we have an active session, let the provider clean up.
-    if let Some(session) = ctx.credential_store.get_auth_session(auth.provider_id()).await? {
+    if let Some(session) = ctx
+        .credential_store
+        .get_auth_session(auth.provider_id())
+        .await?
+    {
         auth.logout(&session).await?;
     }
 
@@ -209,10 +213,7 @@ async fn status(ctx: &AppContext) -> Result<()> {
     println!("{}", "-".repeat(44));
 
     for desc in &ctx.provider_descriptors {
-        let status = ctx
-            .credential_store
-            .credential_status(&desc.id)
-            .await?;
+        let status = ctx.credential_store.credential_status(&desc.id).await?;
 
         let key_marker = if status.has_api_key { "yes" } else { "no" };
         let session_marker = if status.has_auth_session { "yes" } else { "no" };
@@ -227,21 +228,20 @@ async fn status(ctx: &AppContext) -> Result<()> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Best-effort URL opener. Falls back silently.
+/// Best-effort URL opener.
 fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open").arg(url).spawn()?;
-    }
+    return std::process::Command::new("open").arg(url).spawn().map(|_| ());
     #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open").arg(url).spawn()?;
-    }
+    return std::process::Command::new("xdg-open").arg(url).spawn().map(|_| ());
     #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("cmd")
-            .args(["/C", "start", url])
-            .spawn()?;
-    }
-    Ok(())
+    return std::process::Command::new("cmd")
+        .args(["/C", "start", url])
+        .spawn()
+        .map(|_| ());
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "cannot open URLs on this platform",
+    ));
 }

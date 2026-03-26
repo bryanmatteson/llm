@@ -162,10 +162,7 @@ mod tests {
     fn typed_accessor_text() {
         let mut map = AnswerMap::new();
         let id = QuestionId::new("name");
-        map.insert(
-            id.clone(),
-            AnswerValue::Text(Some("Alice".into())),
-        );
+        map.insert(id.clone(), AnswerValue::Text(Some("Alice".into())));
         assert_eq!(map.text(&id), Some("Alice"));
 
         let id2 = QuestionId::new("empty_text");
@@ -206,10 +203,7 @@ mod tests {
         let mut map = AnswerMap::new();
         let id = QuestionId::new("q");
         map.insert(id.clone(), AnswerValue::YesNo(true));
-        assert_eq!(
-            map.to_json_value(&id),
-            Some(serde_json::Value::Bool(true))
-        );
+        assert_eq!(map.to_json_value(&id), Some(serde_json::Value::Bool(true)));
     }
 
     #[test]
@@ -228,10 +222,7 @@ mod tests {
             id.clone(),
             AnswerValue::MultiSelect(vec!["a".into(), "b".into()]),
         );
-        assert_eq!(
-            map.to_json_value(&id),
-            Some(serde_json::json!(["a", "b"]))
-        );
+        assert_eq!(map.to_json_value(&id), Some(serde_json::json!(["a", "b"])));
     }
 
     #[test]

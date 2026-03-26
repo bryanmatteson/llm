@@ -11,17 +11,11 @@ use crate::token::TokenPair;
 #[serde(tag = "type")]
 pub enum AuthMethod {
     /// A static API key (e.g. `sk-...`).
-    ApiKey {
-        masked: String,
-    },
+    ApiKey { masked: String },
     /// A bearer token without an associated OAuth flow.
-    Bearer {
-        expires_at: Option<DateTime<Utc>>,
-    },
+    Bearer { expires_at: Option<DateTime<Utc>> },
     /// Full OAuth 2.0 session with token pair.
-    OAuth {
-        expires_at: DateTime<Utc>,
-    },
+    OAuth { expires_at: DateTime<Utc> },
 }
 
 // ── AuthSession ──────────────────────────────────────────────────────
@@ -63,9 +57,7 @@ pub enum AuthStart {
         interval: u64,
     },
     /// The user must supply an API key.
-    ApiKeyPrompt {
-        env_var_hint: String,
-    },
+    ApiKeyPrompt { env_var_hint: String },
 }
 
 // ── AuthCompletion ───────────────────────────────────────────────────
@@ -113,10 +105,7 @@ pub trait AuthProvider: Send + Sync {
     ///   - OAuth browser: `{ "code": "...", "state": "..." }`
     ///   - Device code: may be empty (the impl polls internally)
     ///   - API key prompt: `{ "api_key": "sk-..." }`
-    async fn complete_login(
-        &self,
-        params: &Metadata,
-    ) -> Result<AuthCompletion, FrameworkError>;
+    async fn complete_login(&self, params: &Metadata) -> Result<AuthCompletion, FrameworkError>;
 
     /// End the current session and clean up any stored tokens.
     async fn logout(&self, session: &AuthSession) -> Result<(), FrameworkError>;

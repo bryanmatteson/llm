@@ -309,11 +309,7 @@ mod tests {
     #[test]
     fn required_rule_empty_text() {
         let kind = QuestionKind::Text { placeholder: None };
-        let errs = validate_answer(
-            &kind,
-            &[ValidationRule::Required],
-            &AnswerValue::Text(None),
-        );
+        let errs = validate_answer(&kind, &[ValidationRule::Required], &AnswerValue::Text(None));
         assert!(errs.iter().any(|e| e.contains("required")));
     }
 
@@ -585,7 +581,10 @@ mod tests {
             condition: None,
         }]);
         let errs = validate_questionnaire_schema(&q).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("min") && e.contains("greater than max")));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("min") && e.contains("greater than max"))
+        );
     }
 
     #[test]
@@ -604,6 +603,9 @@ mod tests {
             condition: None,
         }]);
         let errs = validate_questionnaire_schema(&q).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("default") && e.contains("above max")));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("default") && e.contains("above max"))
+        );
     }
 }

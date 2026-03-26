@@ -114,10 +114,7 @@ fn config(ctx: &AppContext) -> Result<()> {
     println!("LLM Framework Configuration");
     println!("===========================");
     println!();
-    println!(
-        "Registered providers: {}",
-        ctx.provider_descriptors.len()
-    );
+    println!("Registered providers: {}", ctx.provider_descriptors.len());
     for desc in &ctx.provider_descriptors {
         println!("  - {} ({})", desc.display_name, desc.id);
     }
@@ -130,10 +127,7 @@ fn config(ctx: &AppContext) -> Result<()> {
         println!("  - {} ({})", desc.display_name, desc.id);
     }
     println!();
-    println!(
-        "Auth providers:       {}",
-        ctx.auth_providers.len()
-    );
+    println!("Auth providers:       {}", ctx.auth_providers.len());
     for ap in &ctx.auth_providers {
         println!("  - {}", ap.provider_id());
     }

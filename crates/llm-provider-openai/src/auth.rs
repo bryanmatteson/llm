@@ -1,7 +1,7 @@
 use llm_auth::{
     AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, OAuthEndpoints,
-    OAuthTokenResponse, PkceChallenge, RedirectStrategy, TokenPair, build_auth_url,
-    generate_state, redirect_uri_for,
+    OAuthTokenResponse, PkceChallenge, RedirectStrategy, TokenPair, build_auth_url, generate_state,
+    redirect_uri_for,
 };
 use llm_core::{FrameworkError, Metadata, ProviderId};
 
@@ -104,13 +104,7 @@ impl AuthProvider for OpenAiAuthProvider {
         let state = generate_state();
         let redirect_uri = redirect_uri_for(&endpoints.redirect, REDIRECT_PORT);
 
-        let url = build_auth_url(
-            &endpoints,
-            OPENAI_CLIENT_ID,
-            &redirect_uri,
-            &pkce,
-            &state,
-        )?;
+        let url = build_auth_url(&endpoints, OPENAI_CLIENT_ID, &redirect_uri, &pkce, &state)?;
 
         // Stash the PKCE verifier so `complete_login` can use it.
         *self.pkce.lock().unwrap() = Some(pkce);
@@ -122,10 +116,7 @@ impl AuthProvider for OpenAiAuthProvider {
         })
     }
 
-    async fn complete_login(
-        &self,
-        params: &Metadata,
-    ) -> Result<AuthCompletion, FrameworkError> {
+    async fn complete_login(&self, params: &Metadata) -> Result<AuthCompletion, FrameworkError> {
         // ── API-key path ────────────────────────────────────────────
         if let Some(api_key) = params.get("api_key") {
             let masked = if api_key.len() > 8 {
@@ -154,12 +145,9 @@ impl AuthProvider for OpenAiAuthProvider {
             .get("state")
             .ok_or_else(|| FrameworkError::auth("missing \"state\" parameter"))?;
 
-        let pkce = self
-            .pkce
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| FrameworkError::auth("no PKCE challenge found; was start_login called?"))?;
+        let pkce = self.pkce.lock().unwrap().take().ok_or_else(|| {
+            FrameworkError::auth("no PKCE challenge found; was start_login called?")
+        })?;
 
         let endpoints = openai_endpoints();
         let redirect_uri = redirect_uri_for(&endpoints.redirect, REDIRECT_PORT);
@@ -238,7 +226,9 @@ impl AuthProvider for OpenAiAuthProvider {
 
         let tokens = TokenPair::new(
             token_resp.access_token,
-            token_resp.refresh_token.or_else(|| session.tokens.refresh_token.clone()),
+            token_resp
+                .refresh_token
+                .or_else(|| session.tokens.refresh_token.clone()),
             expires_in,
         );
 

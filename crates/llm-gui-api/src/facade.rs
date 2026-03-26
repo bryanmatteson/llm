@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use llm_app::AppContext;
-use llm_core::{FrameworkError, ModelId, ProviderId, ProviderDescriptor, Result};
+use llm_core::{FrameworkError, ModelId, ProviderDescriptor, ProviderId, Result};
 
 use crate::dto::{AuthStatusDto, EventDto, ProviderDto, SessionDto, ToolDto};
 use crate::events::SessionEventAdapter;
@@ -233,11 +233,7 @@ fn provider_to_dto(desc: &ProviderDescriptor) -> ProviderDto {
     ProviderDto {
         id: desc.id.to_string(),
         display_name: desc.display_name.clone(),
-        capabilities: desc
-            .capabilities
-            .iter()
-            .map(|c| format!("{c:?}"))
-            .collect(),
+        capabilities: desc.capabilities.iter().map(|c| format!("{c:?}")).collect(),
     }
 }
 
@@ -298,9 +294,7 @@ fn auth_start_to_json(start: &llm_auth::AuthStart) -> serde_json::Value {
 ///
 /// String values are kept as-is; other JSON types are serialised to their
 /// compact JSON string form.
-fn json_to_metadata(
-    value: &serde_json::Value,
-) -> Result<llm_core::Metadata> {
+fn json_to_metadata(value: &serde_json::Value) -> Result<llm_core::Metadata> {
     let mut map = llm_core::Metadata::new();
     if let Some(obj) = value.as_object() {
         for (k, v) in obj {

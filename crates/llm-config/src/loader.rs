@@ -15,16 +15,18 @@ impl ConfigLoader {
     /// Load an [`AppConfig`] from a TOML file at `path`.
     pub fn load_from_file(path: &Path) -> Result<AppConfig> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
-            FrameworkError::config(format!("failed to read config file {}: {e}", path.display()))
+            FrameworkError::config(format!(
+                "failed to read config file {}: {e}",
+                path.display()
+            ))
         })?;
         Self::parse(&contents)
     }
 
     /// Parse an [`AppConfig`] from a TOML string.
     pub fn parse(toml: &str) -> Result<AppConfig> {
-        toml::from_str(toml).map_err(|e| {
-            FrameworkError::config(format!("failed to parse TOML config: {e}"))
-        })
+        toml::from_str(toml)
+            .map_err(|e| FrameworkError::config(format!("failed to parse TOML config: {e}")))
     }
 
     /// Try to load from `path`, returning `Ok(None)` if the file does not
@@ -40,9 +42,8 @@ impl ConfigLoader {
     /// Serialize `config` and write it to `path`, creating parent directories
     /// as needed.
     pub fn save_to_file(config: &AppConfig, path: &Path) -> Result<()> {
-        let contents = toml::to_string_pretty(config).map_err(|e| {
-            FrameworkError::config(format!("failed to serialize config: {e}"))
-        })?;
+        let contents = toml::to_string_pretty(config)
+            .map_err(|e| FrameworkError::config(format!("failed to serialize config: {e}")))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 FrameworkError::config(format!(

@@ -185,12 +185,17 @@ mod tests {
     }
 
     fn test_session_snapshot() -> SessionSnapshot {
+        use llm_core::SessionConfig;
         SessionSnapshot {
             id: SessionId::new("sess-1"),
-            provider_id: ProviderId::new("openai"),
-            model: ModelId::new("gpt-4o"),
-            system_prompt: None,
-            metadata: Default::default(),
+            config: SessionConfig {
+                provider_id: ProviderId::new("openai"),
+                model: Some(ModelId::new("gpt-4o")),
+                system_prompt: None,
+                tool_policy: Default::default(),
+                limits: Default::default(),
+                metadata: Default::default(),
+            },
             messages: vec![Message::user("hello")],
             created_at: Utc::now(),
             updated_at: Utc::now(),

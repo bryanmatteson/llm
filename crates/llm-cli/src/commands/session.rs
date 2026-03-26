@@ -6,8 +6,8 @@ use llm_core::{FrameworkError, ModelId, ProviderId, Result};
 use llm_provider_openai::{OpenAiClient, OpenAiToolFormat};
 use llm_session::{SessionConfig, SessionHandle, TurnLoopContext, event_channel, run_turn_loop};
 
-use llm_cli::approval::CliApprovalHandler;
 use crate::bootstrap::AppContext;
+use llm_cli::approval::CliApprovalHandler;
 use llm_cli::render::stream::render_session_events;
 
 #[derive(Args)]

@@ -19,7 +19,13 @@ use crate::session::{SessionSnapshot, SessionStore};
 /// Replaces any character that is not alphanumeric, `-`, or `_` with `_`.
 fn safe_filename(id: &str) -> String {
     id.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -32,19 +38,15 @@ fn ensure_dir(dir: &Path) -> Result<()> {
 fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|e| FrameworkError::storage(format!("serialization error: {e}")))?;
-    std::fs::write(path, json).map_err(|e| {
-        FrameworkError::storage(format!("failed to write {}: {e}", path.display()))
-    })
+    std::fs::write(path, json)
+        .map_err(|e| FrameworkError::storage(format!("failed to write {}: {e}", path.display())))
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let value = serde_json::from_str(&contents).map_err(|e| {
-                FrameworkError::storage(format!(
-                    "failed to parse {}: {e}",
-                    path.display()
-                ))
+                FrameworkError::storage(format!("failed to parse {}: {e}", path.display()))
             })?;
             Ok(Some(value))
         }
@@ -73,9 +75,8 @@ fn list_json_stems(dir: &Path) -> Result<Vec<String>> {
         Ok(entries) => {
             let mut stems = Vec::new();
             for entry in entries {
-                let entry = entry.map_err(|e| {
-                    FrameworkError::storage(format!("directory read error: {e}"))
-                })?;
+                let entry = entry
+                    .map_err(|e| FrameworkError::storage(format!("directory read error: {e}")))?;
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("json") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
@@ -297,12 +298,17 @@ mod tests {
     }
 
     fn test_session_snapshot() -> SessionSnapshot {
+        use llm_core::SessionConfig;
         SessionSnapshot {
             id: SessionId::new("sess-file-1"),
-            provider_id: ProviderId::new("openai"),
-            model: ModelId::new("gpt-4o"),
-            system_prompt: None,
-            metadata: Default::default(),
+            config: SessionConfig {
+                provider_id: ProviderId::new("openai"),
+                model: Some(ModelId::new("gpt-4o")),
+                system_prompt: None,
+                tool_policy: Default::default(),
+                limits: Default::default(),
+                metadata: Default::default(),
+            },
             messages: vec![Message::user("hello from file store")],
             created_at: Utc::now(),
             updated_at: Utc::now(),

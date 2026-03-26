@@ -64,7 +64,13 @@ impl QuestionnaireBuilder {
 
     // -- internal helper -----------------------------------------------------
 
-    fn push(mut self, kind: QuestionKind, id: impl Into<String>, label: impl Into<String>, configure: impl FnOnce(QuestionConfig) -> QuestionConfig) -> Self {
+    fn push(
+        mut self,
+        kind: QuestionKind,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
         self.questions
             .push(configure(QuestionConfig::new(id, label, kind)).into_question());
         self
@@ -98,17 +104,34 @@ impl QuestionnaireBuilder {
     ) -> Self {
         let opts = options
             .iter()
-            .map(|(v, l)| ChoiceOption { value: (*v).into(), label: (*l).into() })
+            .map(|(v, l)| ChoiceOption {
+                value: (*v).into(),
+                label: (*l).into(),
+            })
             .collect();
-        self.push(QuestionKind::Choice { options: opts, default: None }, id, label, configure)
+        self.push(
+            QuestionKind::Choice {
+                options: opts,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
     }
 
     fn choice_kind(options: &[&str]) -> QuestionKind {
         let opts = options
             .iter()
-            .map(|v| ChoiceOption { value: (*v).into(), label: (*v).into() })
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+            })
             .collect();
-        QuestionKind::Choice { options: opts, default: None }
+        QuestionKind::Choice {
+            options: opts,
+            default: None,
+        }
     }
 
     // -- yes/no --------------------------------------------------------------
@@ -142,14 +165,28 @@ impl QuestionnaireBuilder {
         label: impl Into<String>,
         configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
     ) -> Self {
-        self.push(QuestionKind::Text { placeholder: None }, id, label, configure)
+        self.push(
+            QuestionKind::Text { placeholder: None },
+            id,
+            label,
+            configure,
+        )
     }
 
     // -- number --------------------------------------------------------------
 
     /// Add a number question.
     pub fn number(self, id: impl Into<String>, label: impl Into<String>) -> Self {
-        self.push(QuestionKind::Number { min: None, max: None, default: None }, id, label, |q| q)
+        self.push(
+            QuestionKind::Number {
+                min: None,
+                max: None,
+                default: None,
+            },
+            id,
+            label,
+            |q| q,
+        )
     }
 
     /// Add a number question with a configuration closure.
@@ -159,15 +196,40 @@ impl QuestionnaireBuilder {
         label: impl Into<String>,
         configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
     ) -> Self {
-        self.push(QuestionKind::Number { min: None, max: None, default: None }, id, label, configure)
+        self.push(
+            QuestionKind::Number {
+                min: None,
+                max: None,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
     }
 
     // -- multi-select --------------------------------------------------------
 
     /// Add a multi-select question.
-    pub fn multi_select(self, id: impl Into<String>, label: impl Into<String>, options: &[&str]) -> Self {
-        let opts = options.iter().map(|v| ChoiceOption { value: (*v).into(), label: (*v).into() }).collect();
-        self.push(QuestionKind::MultiSelect { options: opts }, id, label, |q| q)
+    pub fn multi_select(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        options: &[&str],
+    ) -> Self {
+        let opts = options
+            .iter()
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+            })
+            .collect();
+        self.push(
+            QuestionKind::MultiSelect { options: opts },
+            id,
+            label,
+            |q| q,
+        )
     }
 
     /// Add a multi-select question with a configuration closure.
@@ -178,8 +240,19 @@ impl QuestionnaireBuilder {
         options: &[&str],
         configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
     ) -> Self {
-        let opts = options.iter().map(|v| ChoiceOption { value: (*v).into(), label: (*v).into() }).collect();
-        self.push(QuestionKind::MultiSelect { options: opts }, id, label, configure)
+        let opts = options
+            .iter()
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+            })
+            .collect();
+        self.push(
+            QuestionKind::MultiSelect { options: opts },
+            id,
+            label,
+            configure,
+        )
     }
 
     // -- raw -----------------------------------------------------------------
@@ -258,7 +331,10 @@ impl QuestionConfig {
 
     /// Set the default value for a choice question.
     pub fn default(mut self, value: impl Into<String>) -> Self {
-        if let QuestionKind::Choice { ref mut default, .. } = self.kind {
+        if let QuestionKind::Choice {
+            ref mut default, ..
+        } = self.kind
+        {
             *default = Some(value.into());
         }
         self
@@ -282,7 +358,10 @@ impl QuestionConfig {
 
     /// Set a default number value.
     pub fn default_number(mut self, n: f64) -> Self {
-        if let QuestionKind::Number { ref mut default, .. } = self.kind {
+        if let QuestionKind::Number {
+            ref mut default, ..
+        } = self.kind
+        {
             *default = Some(n);
         }
         self
@@ -290,7 +369,10 @@ impl QuestionConfig {
 
     /// Set a placeholder for a text question.
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
-        if let QuestionKind::Text { ref mut placeholder } = self.kind {
+        if let QuestionKind::Text {
+            ref mut placeholder,
+        } = self.kind
+        {
             *placeholder = Some(text.into());
         }
         self
@@ -298,7 +380,12 @@ impl QuestionConfig {
 
     /// Set the numeric range for a number question.
     pub fn range(mut self, lo: f64, hi: f64) -> Self {
-        if let QuestionKind::Number { ref mut min, ref mut max, .. } = self.kind {
+        if let QuestionKind::Number {
+            ref mut min,
+            ref mut max,
+            ..
+        } = self.kind
+        {
             *min = Some(lo);
             *max = Some(hi);
         }
@@ -324,7 +411,11 @@ impl QuestionConfig {
     }
 
     /// Only show this question when another question's answer equals a value.
-    pub fn show_if_equals(mut self, question_id: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn show_if_equals(
+        mut self,
+        question_id: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
         self.condition = Some(ConditionExpr::Equals {
             question_id: QuestionId::new(question_id.into()),
             value: serde_json::Value::String(value.into()),
@@ -369,16 +460,21 @@ mod tests {
         assert!(q.questions[0].required);
         assert_eq!(
             q.questions[0].kind,
-            QuestionKind::YesNo { default: Some(true) }
+            QuestionKind::YesNo {
+                default: Some(true)
+            }
         );
     }
 
     #[test]
     fn build_with_choices_and_conditions() {
         let q = QuestionnaireBuilder::new("setup", "Setup")
-            .choice_with("provider", "Which provider?", &["openai", "anthropic"], |q| {
-                q.default("openai").required()
-            })
+            .choice_with(
+                "provider",
+                "Which provider?",
+                &["openai", "anthropic"],
+                |q| q.default("openai").required(),
+            )
             .text_with("api_key", "API Key:", |q| {
                 q.placeholder("sk-...")
                     .min_length(8)
@@ -409,7 +505,9 @@ mod tests {
     #[test]
     fn build_number_with_range() {
         let q = QuestionnaireBuilder::new("n", "Numbers")
-            .number_with("age", "Your age?", |q| q.range(0.0, 150.0).default_number(25.0))
+            .number_with("age", "Your age?", |q| {
+                q.range(0.0, 150.0).default_number(25.0)
+            })
             .build();
 
         match &q.questions[0].kind {
@@ -425,9 +523,12 @@ mod tests {
     #[test]
     fn build_multi_select() {
         let q = QuestionnaireBuilder::new("ms", "Multi")
-            .multi_select_with("tools", "Which tools?", &["search", "calc", "weather"], |q| {
-                q.help("Pick all that apply")
-            })
+            .multi_select_with(
+                "tools",
+                "Which tools?",
+                &["search", "calc", "weather"],
+                |q| q.help("Pick all that apply"),
+            )
             .build();
 
         let q0 = &q.questions[0];
@@ -452,7 +553,12 @@ mod tests {
     #[test]
     fn choice_with_labels() {
         let q = QuestionnaireBuilder::new("l", "Labels")
-            .choice_labeled("lang", "Language", &[("en", "English"), ("es", "Spanish")], |q| q)
+            .choice_labeled(
+                "lang",
+                "Language",
+                &[("en", "English"), ("es", "Spanish")],
+                |q| q,
+            )
             .build();
 
         match &q.questions[0].kind {
@@ -495,7 +601,9 @@ mod tests {
         assert!(!q.questions[1].required);
         assert_eq!(
             q.questions[2].kind,
-            QuestionKind::YesNo { default: Some(true) }
+            QuestionKind::YesNo {
+                default: Some(true)
+            }
         );
     }
 }

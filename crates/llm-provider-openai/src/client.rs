@@ -12,8 +12,8 @@ use llm_provider_api::{LlmProviderClient, ProviderEvent, TurnRequest, TurnRespon
 
 use crate::descriptor::PROVIDER_ID;
 use crate::wire::{
-    ChatCompletionRequest, ChatCompletionResponse, ModelListResponse, WireMessage, WireToolCall,
-    WireFunctionCall,
+    ChatCompletionRequest, ChatCompletionResponse, ModelListResponse, WireFunctionCall,
+    WireMessage, WireToolCall,
 };
 
 /// OpenAI-specific LLM client.
@@ -100,7 +100,13 @@ impl OpenAiClient {
                     ContentBlock::ToolResult { content, .. } => Some(content.clone()),
                     _ => None,
                 })
-                .or_else(|| if text.is_empty() { None } else { Some(text.clone()) })
+                .or_else(|| {
+                    if text.is_empty() {
+                        None
+                    } else {
+                        Some(text.clone())
+                    }
+                })
         } else if text.is_empty() && !tool_calls.is_empty() {
             None
         } else {
@@ -225,11 +231,7 @@ impl LlmProviderClient for OpenAiClient {
         }
 
         // ── Build request body ──────────────────────────────────────
-        let model = request
-            .model
-            .as_ref()
-            .unwrap_or(&self.model)
-            .to_string();
+        let model = request.model.as_ref().unwrap_or(&self.model).to_string();
 
         let tools = if request.tools.is_empty() {
             None
@@ -273,15 +275,9 @@ impl LlmProviderClient for OpenAiClient {
         })?;
 
         // ── Parse response ──────────────────────────────────────────
-        let choice = completion
-            .choices
-            .first()
-            .ok_or_else(|| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    "response contained no choices",
-                )
-            })?;
+        let choice = completion.choices.first().ok_or_else(|| {
+            llm_core::FrameworkError::provider(PROVIDER_ID.clone(), "response contained no choices")
+        })?;
 
         let message = Self::wire_to_message(&choice.message);
         let stop_reason = Self::map_stop_reason(choice.finish_reason.as_deref());
@@ -452,10 +448,22 @@ mod tests {
 
     #[test]
     fn map_stop_reason_values() {
-        assert_eq!(OpenAiClient::map_stop_reason(Some("stop")), StopReason::EndTurn);
-        assert_eq!(OpenAiClient::map_stop_reason(Some("tool_calls")), StopReason::ToolUse);
-        assert_eq!(OpenAiClient::map_stop_reason(Some("length")), StopReason::MaxTokens);
+        assert_eq!(
+            OpenAiClient::map_stop_reason(Some("stop")),
+            StopReason::EndTurn
+        );
+        assert_eq!(
+            OpenAiClient::map_stop_reason(Some("tool_calls")),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            OpenAiClient::map_stop_reason(Some("length")),
+            StopReason::MaxTokens
+        );
         assert_eq!(OpenAiClient::map_stop_reason(None), StopReason::EndTurn);
-        assert_eq!(OpenAiClient::map_stop_reason(Some("unknown")), StopReason::EndTurn);
+        assert_eq!(
+            OpenAiClient::map_stop_reason(Some("unknown")),
+            StopReason::EndTurn
+        );
     }
 }

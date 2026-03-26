@@ -53,10 +53,7 @@ pub enum ContentBlock {
         input: Value,
     },
     #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: Value,
-    },
+    ToolResult { tool_use_id: String, content: Value },
 }
 
 // ── Messages API response ──────────────────────────────────────────

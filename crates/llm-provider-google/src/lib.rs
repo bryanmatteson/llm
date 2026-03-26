@@ -9,7 +9,7 @@ pub mod wire;
 pub use auth::GoogleAuthProvider;
 pub use client::GoogleClient;
 pub use descriptor::{
-    provider_descriptor, API_BASE, DEFAULT_MODEL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
-    PROVIDER_ID,
+    API_BASE, DEFAULT_MODEL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, PROVIDER_ID,
+    provider_descriptor,
 };
 pub use tools::GoogleToolFormat;

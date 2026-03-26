@@ -12,4 +12,4 @@ pub use condition::ConditionExpr;
 pub use engine::QuestionnaireRun;
 pub use ids::{QuestionId, QuestionnaireId};
 pub use schema::{ChoiceOption, Question, QuestionKind, Questionnaire};
-pub use validate::{validate_answer, validate_questionnaire_schema, ValidationRule};
+pub use validate::{ValidationRule, validate_answer, validate_questionnaire_schema};

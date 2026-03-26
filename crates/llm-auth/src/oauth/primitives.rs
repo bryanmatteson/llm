@@ -27,15 +27,11 @@ pub enum RedirectStrategy {
         fixed_port: Option<u16>,
     },
     /// The provider redirects to a well-known remote URI that relays the code.
-    RemoteCallback {
-        redirect_uri: &'static str,
-    },
+    RemoteCallback { redirect_uri: &'static str },
     /// The provider uses the device-code grant (no browser redirect).
     DeviceCode,
     /// A custom URI scheme registered by the application (e.g. `myapp://`).
-    CustomScheme {
-        scheme: &'static str,
-    },
+    CustomScheme { scheme: &'static str },
 }
 
 /// The token response returned by an OAuth token endpoint.

@@ -217,9 +217,11 @@ mod tests {
 
     #[test]
     fn answers_are_recorded() {
-        let q = make_questionnaire(vec![
-            choice_question("color", &["red", "blue"], Some("red")),
-        ]);
+        let q = make_questionnaire(vec![choice_question(
+            "color",
+            &["red", "blue"],
+            Some("red"),
+        )]);
         let mut run = QuestionnaireRun::new(q).unwrap();
         run.submit_answer(AnswerValue::Choice("blue".into()))
             .unwrap();
@@ -261,9 +263,7 @@ mod tests {
             question
         }]);
         let mut run = QuestionnaireRun::new(q).unwrap();
-        let errs = run
-            .submit_answer(AnswerValue::Text(None))
-            .unwrap_err();
+        let errs = run.submit_answer(AnswerValue::Text(None)).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("required")));
     }
 
@@ -315,10 +315,7 @@ mod tests {
         run.submit_answer(AnswerValue::YesNo(true)).unwrap();
 
         // advanced_setting should be visible.
-        assert_eq!(
-            run.next_question().unwrap().id.as_str(),
-            "advanced_setting"
-        );
+        assert_eq!(run.next_question().unwrap().id.as_str(), "advanced_setting");
         run.submit_answer(AnswerValue::Text(Some("custom".into())))
             .unwrap();
 
@@ -351,9 +348,7 @@ mod tests {
         run.submit_answer(AnswerValue::YesNo(true)).unwrap();
         assert!(run.is_complete());
 
-        let errs = run
-            .submit_answer(AnswerValue::YesNo(false))
-            .unwrap_err();
+        let errs = run.submit_answer(AnswerValue::YesNo(false)).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("no current question")));
     }
 

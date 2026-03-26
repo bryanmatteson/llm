@@ -20,9 +20,9 @@ pub fn validate_tool_input(descriptor: &ToolDescriptor, input: &Value) -> Result
     let schema = &descriptor.parameters;
 
     // The input must be a JSON object.
-    let input_obj = input.as_object().ok_or_else(|| {
-        FrameworkError::validation("tool input must be a JSON object")
-    })?;
+    let input_obj = input
+        .as_object()
+        .ok_or_else(|| FrameworkError::validation("tool input must be a JSON object"))?;
 
     // ---- required fields ----
     if let Some(required) = schema.get("required").and_then(|v| v.as_array()) {

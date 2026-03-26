@@ -8,7 +8,10 @@ pub enum FrameworkError {
     Auth { reason: String },
 
     #[error("provider error ({provider}): {message}")]
-    Provider { provider: ProviderId, message: String },
+    Provider {
+        provider: ProviderId,
+        message: String,
+    },
 
     #[error("tool execution error ({tool}): {reason}")]
     Tool { tool: ToolId, reason: String },

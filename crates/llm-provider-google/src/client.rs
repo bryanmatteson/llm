@@ -12,8 +12,8 @@ use llm_provider_api::{LlmProviderClient, ProviderEvent, TurnRequest, TurnRespon
 
 use crate::descriptor::{API_BASE, PROVIDER_ID};
 use crate::wire::{
-    Candidate, GenerateContentRequest, GenerateContentResponse, GenerationConfig, ModelListResponse,
-    WireContent, WireFunctionCall, WireFunctionResponse, WirePart, WireTool,
+    Candidate, GenerateContentRequest, GenerateContentResponse, GenerationConfig,
+    ModelListResponse, WireContent, WireFunctionCall, WireFunctionResponse, WirePart, WireTool,
 };
 
 /// Google Gemini-specific LLM client.
@@ -34,11 +34,7 @@ impl GoogleClient {
     /// * `model`        - the model id to use (e.g. `"gemini-2.5-flash"`).
     /// * `base_url`     - optional API base URL override. If `None`, uses the
     ///   default Gemini API base.
-    pub fn new(
-        auth_session: AuthSession,
-        model: ModelId,
-        base_url: Option<String>,
-    ) -> Self {
+    pub fn new(auth_session: AuthSession, model: ModelId, base_url: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             auth_session,
@@ -56,7 +52,10 @@ impl GoogleClient {
         let url = format!("{base}/{endpoint}");
 
         // For API key auth, append the key as a query parameter.
-        if matches!(self.auth_session.method, llm_auth::AuthMethod::ApiKey { .. }) {
+        if matches!(
+            self.auth_session.method,
+            llm_auth::AuthMethod::ApiKey { .. }
+        ) {
             format!("{url}?key={}", self.auth_session.tokens.access_token)
         } else {
             url
@@ -88,9 +87,10 @@ impl GoogleClient {
         let mut parts = Vec::new();
 
         // Check if this is a tool-result message.
-        let has_tool_result = msg.content.iter().any(|b| {
-            matches!(b, ContentBlock::ToolResult { .. })
-        });
+        let has_tool_result = msg
+            .content
+            .iter()
+            .any(|b| matches!(b, ContentBlock::ToolResult { .. }));
 
         if has_tool_result {
             // Tool results are sent as functionResponse parts.
@@ -100,9 +100,8 @@ impl GoogleClient {
                     content,
                 } = block
                 {
-                    let response_value: serde_json::Value =
-                        serde_json::from_str(content)
-                            .unwrap_or(serde_json::json!({"result": content}));
+                    let response_value: serde_json::Value = serde_json::from_str(content)
+                        .unwrap_or(serde_json::json!({"result": content}));
                     parts.push(WirePart {
                         function_response: Some(WireFunctionResponse {
                             name: tool_use_id.clone(),
@@ -280,11 +279,7 @@ impl LlmProviderClient for GoogleClient {
             None
         };
 
-        let model = request
-            .model
-            .as_ref()
-            .unwrap_or(&self.model)
-            .to_string();
+        let model = request.model.as_ref().unwrap_or(&self.model).to_string();
 
         let body = GenerateContentRequest {
             contents,
@@ -303,16 +298,9 @@ impl LlmProviderClient for GoogleClient {
 
         let builder = self.apply_auth(builder);
 
-        let resp = builder
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("request failed: {e}"),
-                )
-            })?;
+        let resp = builder.json(&body).send().await.map_err(|e| {
+            llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
+        })?;
 
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
@@ -327,15 +315,12 @@ impl LlmProviderClient for GoogleClient {
         Self::check_safety(&response)?;
 
         // ── Parse response ──────────────────────────────────────────
-        let candidate = response
-            .candidates
-            .first()
-            .ok_or_else(|| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    "response contained no candidates",
-                )
-            })?;
+        let candidate = response.candidates.first().ok_or_else(|| {
+            llm_core::FrameworkError::provider(
+                PROVIDER_ID.clone(),
+                "response contained no candidates",
+            )
+        })?;
 
         let message = Self::wire_to_message(candidate);
         let stop_reason = Self::map_stop_reason(candidate.finish_reason.as_deref());
@@ -377,15 +362,12 @@ impl LlmProviderClient for GoogleClient {
         let builder = self.http.get(&url);
         let builder = self.apply_auth(builder);
 
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("list models request failed: {e}"),
-                )
-            })?;
+        let resp = builder.send().await.map_err(|e| {
+            llm_core::FrameworkError::provider(
+                PROVIDER_ID.clone(),
+                format!("list models request failed: {e}"),
+            )
+        })?;
 
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
@@ -402,9 +384,7 @@ impl LlmProviderClient for GoogleClient {
             .map(|m| {
                 // Strip the "models/" prefix from the resource name.
                 let id = m.name.strip_prefix("models/").unwrap_or(&m.name);
-                let display_name = m
-                    .display_name
-                    .unwrap_or_else(|| id.to_string());
+                let display_name = m.display_name.unwrap_or_else(|| id.to_string());
                 ModelDescriptor {
                     id: ModelId::new(id),
                     provider: PROVIDER_ID.clone(),
@@ -547,11 +527,26 @@ mod tests {
 
     #[test]
     fn map_stop_reason_values() {
-        assert_eq!(GoogleClient::map_stop_reason(Some("STOP")), StopReason::EndTurn);
-        assert_eq!(GoogleClient::map_stop_reason(Some("MAX_TOKENS")), StopReason::MaxTokens);
-        assert_eq!(GoogleClient::map_stop_reason(Some("SAFETY")), StopReason::Stop);
-        assert_eq!(GoogleClient::map_stop_reason(Some("RECITATION")), StopReason::Stop);
+        assert_eq!(
+            GoogleClient::map_stop_reason(Some("STOP")),
+            StopReason::EndTurn
+        );
+        assert_eq!(
+            GoogleClient::map_stop_reason(Some("MAX_TOKENS")),
+            StopReason::MaxTokens
+        );
+        assert_eq!(
+            GoogleClient::map_stop_reason(Some("SAFETY")),
+            StopReason::Stop
+        );
+        assert_eq!(
+            GoogleClient::map_stop_reason(Some("RECITATION")),
+            StopReason::Stop
+        );
         assert_eq!(GoogleClient::map_stop_reason(None), StopReason::EndTurn);
-        assert_eq!(GoogleClient::map_stop_reason(Some("UNKNOWN")), StopReason::EndTurn);
+        assert_eq!(
+            GoogleClient::map_stop_reason(Some("UNKNOWN")),
+            StopReason::EndTurn
+        );
     }
 }

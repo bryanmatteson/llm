@@ -1,8 +1,6 @@
 use std::sync::LazyLock;
 
-use llm_core::{
-    Metadata, ModelId, ProviderCapability, ProviderDescriptor, ProviderId,
-};
+use llm_core::{Metadata, ModelId, ProviderCapability, ProviderDescriptor, ProviderId};
 
 /// Provider identifier used across the framework.
 pub static PROVIDER_ID: LazyLock<ProviderId> = LazyLock::new(|| ProviderId::new("anthropic"));
@@ -58,6 +56,9 @@ mod tests {
         assert!(desc.capabilities.contains(&ProviderCapability::OAuth));
         assert!(desc.capabilities.contains(&ProviderCapability::ApiKeyAuth));
         assert!(desc.capabilities.contains(&ProviderCapability::Streaming));
-        assert!(desc.capabilities.contains(&ProviderCapability::SystemPrompt));
+        assert!(
+            desc.capabilities
+                .contains(&ProviderCapability::SystemPrompt)
+        );
     }
 }

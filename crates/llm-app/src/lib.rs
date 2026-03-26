@@ -27,12 +27,10 @@ mod tests {
     use async_trait::async_trait;
     use tokio_stream::Stream;
 
-    use llm_auth::{
-        AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, TokenPair,
-    };
+    use llm_auth::{AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, TokenPair};
     use llm_core::{
-        FrameworkError, Metadata, ModelDescriptor, ModelId, ProviderId, ProviderCapability,
-        ProviderDescriptor, Result,
+        FrameworkError, Metadata, ModelDescriptor, ModelId, ProviderCapability, ProviderDescriptor,
+        ProviderId, Result,
     };
     use llm_provider_api::{
         LlmProviderClient, ProviderEvent, ProviderToolCall, ProviderToolDescriptor,
