@@ -53,6 +53,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 toml = "0.8"
+kdl-config = { git = "https://github.com/bryanmatteson/kdl-config.git" }
 regex-lite = "0.1"
 schemars = "0.8"
 url = "2"

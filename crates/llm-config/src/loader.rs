@@ -4,7 +4,7 @@ use llm_core::{FrameworkError, Result};
 
 use crate::app::AppConfig;
 
-/// Loads and saves [`AppConfig`] from TOML files.
+/// Loads [`AppConfig`] from KDL files.
 ///
 /// This is a pure utility — it takes explicit paths and never assumes a
 /// default location.  The *application* (CLI binary, GUI shell, etc.)
@@ -12,21 +12,18 @@ use crate::app::AppConfig;
 pub struct ConfigLoader;
 
 impl ConfigLoader {
-    /// Load an [`AppConfig`] from a TOML file at `path`.
+    /// Load an [`AppConfig`] from a KDL file at `path`.
     pub fn load_from_file(path: &Path) -> Result<AppConfig> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
-            FrameworkError::config(format!(
-                "failed to read config file {}: {e}",
-                path.display()
-            ))
+            FrameworkError::config(format!("failed to read config file {}: {e}", path.display()))
         })?;
         Self::parse(&contents)
     }
 
-    /// Parse an [`AppConfig`] from a TOML string.
-    pub fn parse(toml: &str) -> Result<AppConfig> {
-        toml::from_str(toml)
-            .map_err(|e| FrameworkError::config(format!("failed to parse TOML config: {e}")))
+    /// Parse an [`AppConfig`] from a KDL string.
+    pub fn parse(kdl: &str) -> Result<AppConfig> {
+        kdl_config::parse_str(kdl)
+            .map_err(|e| FrameworkError::config(format!("failed to parse KDL config: {e}")))
     }
 
     /// Try to load from `path`, returning `Ok(None)` if the file does not
@@ -39,11 +36,10 @@ impl ConfigLoader {
         }
     }
 
-    /// Serialize `config` and write it to `path`, creating parent directories
-    /// as needed.
+    /// Render `config` to a KDL string and write it to `path`, creating
+    /// parent directories as needed.
     pub fn save_to_file(config: &AppConfig, path: &Path) -> Result<()> {
-        let contents = toml::to_string_pretty(config)
-            .map_err(|e| FrameworkError::config(format!("failed to serialize config: {e}")))?;
+        let contents = kdl_config::to_kdl(config, "llm");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 FrameworkError::config(format!(

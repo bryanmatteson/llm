@@ -48,6 +48,12 @@ macro_rules! define_id {
             }
         }
 
+        impl From<$name> for String {
+            fn from(id: $name) -> Self {
+                id.0.to_string()
+            }
+        }
+
         impl PartialOrd for $name {
             fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
                 Some(self.cmp(other))

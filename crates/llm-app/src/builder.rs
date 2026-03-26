@@ -152,7 +152,11 @@ impl AppBuilder {
                 builder = builder.default(ToolApproval::RequireConfirmation);
             }
             for tp in &cfg.tool_policies {
-                let approval = if !tp.allowed {
+                // The KDL validation layer guarantees `allowed` is always
+                // `Some` by the time we reach here.  The parse rejects any
+                // tool-policy missing both `allow` and `forbid`.
+                let allowed = tp.allowed.unwrap_or(false);
+                let approval = if !allowed {
                     ToolApproval::Deny
                 } else if tp.require_confirmation {
                     ToolApproval::RequireConfirmation
@@ -162,7 +166,7 @@ impl AppBuilder {
                 builder = builder.rule(
                     tp.tool_id.as_str(),
                     approval,
-                    tp.max_calls_per_session.map(|n| n as u32),
+                    tp.max_calls.map(|n| n as u32),
                 );
             }
             Some(builder.build())
