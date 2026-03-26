@@ -4,6 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "llm_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "llmctl"
 path = "src/main.rs"

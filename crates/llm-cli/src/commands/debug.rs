@@ -2,7 +2,7 @@ use clap::{Args, Subcommand};
 
 use llm_core::{FrameworkError, Result};
 
-use crate::bootstrap::AppContext;
+use llm_cli::bootstrap::AppContext;
 
 #[derive(Args)]
 pub struct DebugArgs {

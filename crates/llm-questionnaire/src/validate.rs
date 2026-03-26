@@ -258,7 +258,7 @@ fn kind_name(kind: &QuestionKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use llm_core::{QuestionId, QuestionnaireId};
+    use crate::ids::{QuestionId, QuestionnaireId};
 
     use super::*;
     use crate::schema::{ChoiceOption, Question, QuestionKind, Questionnaire};

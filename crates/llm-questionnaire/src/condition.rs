@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use llm_core::QuestionId;
+use crate::ids::QuestionId;
 
 use crate::answer::AnswerMap;
 

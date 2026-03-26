@@ -6,9 +6,9 @@ use llm_core::{FrameworkError, ModelId, ProviderId, Result};
 use llm_provider_openai::{OpenAiClient, OpenAiToolFormat};
 use llm_session::{SessionConfig, SessionHandle, event_channel, run_turn_loop};
 
-use crate::approval::CliApprovalHandler;
-use crate::bootstrap::AppContext;
-use crate::render::stream::render_session_events;
+use llm_cli::approval::CliApprovalHandler;
+use llm_cli::bootstrap::AppContext;
+use llm_cli::render::stream::render_session_events;
 
 #[derive(Args)]
 pub struct SessionArgs {
@@ -124,9 +124,9 @@ async fn interactive_loop(
         io::stderr().flush().ok();
 
         let mut line = String::new();
-        let bytes = reader.read_line(&mut line).map_err(|e| {
-            FrameworkError::session(format!("failed to read input: {e}"))
-        })?;
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|e| FrameworkError::session(format!("failed to read input: {e}")))?;
 
         // EOF
         if bytes == 0 {
@@ -156,21 +156,13 @@ async fn interactive_loop(
                 ))
             })?;
 
-        let model_id = handle
-            .config
-            .model
-            .clone()
-            .unwrap_or_else(|| {
-                ctx.provider_descriptor(provider)
-                    .map(|d| d.default_model.clone())
-                    .unwrap_or_else(|| ModelId::new("gpt-4o-mini"))
-            });
+        let model_id = handle.config.model.clone().unwrap_or_else(|| {
+            ctx.provider_descriptor(provider)
+                .map(|d| d.default_model.clone())
+                .unwrap_or_else(|| ModelId::new("gpt-4o-mini"))
+        });
 
-        let client = OpenAiClient::new(
-            auth_session,
-            model_id,
-            llm_provider_openai::API_BASE,
-        );
+        let client = OpenAiClient::new(auth_session, model_id, llm_provider_openai::API_BASE);
 
         let adapter = OpenAiToolFormat;
         let approval = CliApprovalHandler;

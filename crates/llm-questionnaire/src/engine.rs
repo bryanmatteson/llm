@@ -133,7 +133,7 @@ impl QuestionnaireRun {
 
 #[cfg(test)]
 mod tests {
-    use llm_core::{QuestionId, QuestionnaireId};
+    use crate::ids::{QuestionId, QuestionnaireId};
 
     use super::*;
     use crate::condition::ConditionExpr;

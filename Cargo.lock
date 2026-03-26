@@ -929,7 +929,6 @@ dependencies = [
 name = "llm-questionnaire"
 version = "0.1.0"
 dependencies = [
- "llm-core",
  "regex-lite",
  "serde",
  "serde_json",

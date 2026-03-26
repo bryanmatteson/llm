@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use llm_core::{QuestionId, QuestionnaireId};
+use crate::ids::{QuestionId, QuestionnaireId};
 
 use crate::condition::ConditionExpr;
 use crate::validate::ValidationRule;

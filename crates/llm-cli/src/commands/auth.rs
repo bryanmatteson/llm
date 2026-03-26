@@ -4,7 +4,7 @@ use clap::{Args, Subcommand};
 
 use llm_core::{FrameworkError, Metadata, Result};
 
-use crate::bootstrap::AppContext;
+use llm_cli::bootstrap::AppContext;
 
 #[derive(Args)]
 pub struct AuthArgs {

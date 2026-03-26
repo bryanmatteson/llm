@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use llm_core::QuestionId;
+use crate::ids::QuestionId;
 
 /// A typed answer value produced by a single question.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

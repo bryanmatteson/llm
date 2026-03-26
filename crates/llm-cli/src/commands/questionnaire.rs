@@ -1,12 +1,12 @@
 use clap::{Args, Subcommand};
 
-use llm_core::{QuestionId, QuestionnaireId, Result};
+use llm_core::Result;
 use llm_questionnaire::{
-    ChoiceOption, Question, QuestionKind, Questionnaire,
+    ChoiceOption, Question, QuestionId, QuestionKind, Questionnaire, QuestionnaireId,
 };
 
-use crate::bootstrap::AppContext;
-use crate::render::questionnaire::run_terminal_questionnaire;
+use llm_cli::bootstrap::AppContext;
+use llm_cli::render::questionnaire::run_terminal_questionnaire;
 
 #[derive(Args)]
 pub struct QuestionnaireArgs {
