@@ -1,3 +1,4 @@
+use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -5,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use llm_core::{Result, ToolId};
+use llm_core::{FrameworkError, Result, ToolId};
 
 use crate::context::ToolContext;
 use crate::tool::{DynTool, ToolDescriptor, ToolInfo};
@@ -14,17 +15,17 @@ use crate::tool::{DynTool, ToolDescriptor, ToolInfo};
 ///
 /// The handler receives a shared reference to application state `S` and
 /// a JSON `Value` of arguments, and returns a future producing a
-/// `Result<Value, FrameworkError>`.
-pub type HandlerFn<S> = for<'a> fn(
+/// `Result<Value, E>` where `E` converts into `FrameworkError`.
+pub type HandlerFn<S, E> = for<'a> fn(
     &'a S,
     Value,
-) -> Pin<Box<dyn Future<Output = Result<Value>> + Send + 'a>>;
+) -> Pin<Box<dyn Future<Output = std::result::Result<Value, E>> + Send + 'a>>;
 
 /// A [`DynTool`] built from a function pointer and captured application state.
 ///
-/// This lets you expose existing `async fn(state, args) -> Result<Value>`
-/// functions as tools without implementing the full typed [`Tool`](crate::Tool)
-/// trait.
+/// The error type `E` can be any type that implements `Into<FrameworkError>`,
+/// letting you use your own typed errors in tool handlers while the `DynTool`
+/// boundary converts them automatically.
 ///
 /// # Example
 ///
@@ -35,17 +36,16 @@ pub type HandlerFn<S> = for<'a> fn(
 ///
 /// struct AppState { db: Database }
 ///
-/// async fn search(state: &AppState, args: Value) -> llm_core::Result<Value> {
+/// async fn search(state: &AppState, args: Value) -> Result<Value, MyError> {
 ///     let query = args["query"].as_str().unwrap_or("");
-///     let results = state.db.search(query).await
-///         .map_err(|e| FrameworkError::tool(ToolId::new("search"), e.to_string()))?;
+///     let results = state.db.search(query).await?;
 ///     Ok(json!({ "results": results }))
 /// }
 ///
 /// let state = Arc::new(AppState { db });
 /// let tool = FnTool::new(
 ///     ToolInfo::new("search", "Search the database"),
-///     json!({"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+///     json!({"type": "object", "properties": {"query": {"type": "string"}}}),
 ///     state,
 ///     |s, args| Box::pin(search(s, args)),
 /// );
@@ -53,14 +53,22 @@ pub type HandlerFn<S> = for<'a> fn(
 /// let mut registry = ToolRegistry::new();
 /// registry.register(Arc::new(tool));
 /// ```
-pub struct FnTool<S: Send + Sync + 'static> {
+pub struct FnTool<S, E = FrameworkError>
+where
+    S: Send + Sync + 'static,
+    E: Into<FrameworkError> + Send + 'static,
+{
     info: ToolInfo,
     parameters: Value,
     state: Arc<S>,
-    handler: HandlerFn<S>,
+    handler: HandlerFn<S, E>,
 }
 
-impl<S: Send + Sync + 'static> FnTool<S> {
+impl<S, E> FnTool<S, E>
+where
+    S: Send + Sync + 'static,
+    E: Into<FrameworkError> + Send + 'static,
+{
     /// Create a new function-based tool.
     ///
     /// - `info` – the tool's identity and description.
@@ -71,7 +79,7 @@ impl<S: Send + Sync + 'static> FnTool<S> {
         info: ToolInfo,
         parameters: Value,
         state: Arc<S>,
-        handler: HandlerFn<S>,
+        handler: HandlerFn<S, E>,
     ) -> Self {
         Self {
             info,
@@ -82,8 +90,12 @@ impl<S: Send + Sync + 'static> FnTool<S> {
     }
 }
 
-impl<S: Send + Sync + 'static> std::fmt::Debug for FnTool<S> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<S, E> fmt::Debug for FnTool<S, E>
+where
+    S: Send + Sync + 'static,
+    E: Into<FrameworkError> + Send + 'static,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FnTool")
             .field("id", &self.info.id)
             .field("wire_name", &self.info.wire_name)
@@ -92,7 +104,11 @@ impl<S: Send + Sync + 'static> std::fmt::Debug for FnTool<S> {
 }
 
 #[async_trait]
-impl<S: Send + Sync + 'static> DynTool for FnTool<S> {
+impl<S, E> DynTool for FnTool<S, E>
+where
+    S: Send + Sync + 'static,
+    E: Into<FrameworkError> + Send + 'static,
+{
     fn descriptor(&self) -> ToolDescriptor {
         ToolDescriptor {
             id: self.info.id.clone(),
@@ -105,7 +121,9 @@ impl<S: Send + Sync + 'static> DynTool for FnTool<S> {
     }
 
     async fn invoke(&self, input: Value, _ctx: &ToolContext) -> Result<Value> {
-        (self.handler)(&self.state, input).await
+        (self.handler)(&self.state, input)
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -124,7 +142,10 @@ mod tests {
         label: String,
     }
 
-    async fn count_handler(state: &Counter, args: Value) -> Result<Value> {
+    async fn count_handler(
+        state: &Counter,
+        args: Value,
+    ) -> std::result::Result<Value, FrameworkError> {
         let n = args["n"].as_u64().unwrap_or(1);
         Ok(json!({ "label": state.label, "count": n }))
     }
@@ -177,7 +198,10 @@ mod tests {
 
     #[tokio::test]
     async fn fn_tool_propagates_errors() {
-        async fn failing(_: &(), _args: Value) -> Result<Value> {
+        async fn failing(
+            _: &(),
+            _args: Value,
+        ) -> std::result::Result<Value, FrameworkError> {
             Err(FrameworkError::tool(
                 ToolId::new("fail"),
                 "intentional failure",
@@ -196,9 +220,40 @@ mod tests {
         assert!(err.to_string().contains("intentional failure"));
     }
 
+    // Test with a custom error type that implements Into<FrameworkError>
+    #[derive(Debug)]
+    struct CustomError(String);
+
+    impl From<CustomError> for FrameworkError {
+        fn from(e: CustomError) -> Self {
+            FrameworkError::tool(ToolId::new("custom"), e.0)
+        }
+    }
+
+    async fn custom_err_handler(
+        _: &(),
+        _args: Value,
+    ) -> std::result::Result<Value, CustomError> {
+        Err(CustomError("custom error".to_string()))
+    }
+
+    #[tokio::test]
+    async fn fn_tool_converts_custom_error() {
+        let tool = FnTool::new(
+            ToolInfo::new("custom", "Custom error test"),
+            json!({"type": "object"}),
+            Arc::new(()),
+            |s, args| Box::pin(custom_err_handler(s, args)),
+        );
+
+        let ctx = make_context();
+        let err = tool.invoke(json!({}), &ctx).await.unwrap_err();
+        assert!(err.to_string().contains("custom error"));
+    }
+
     #[test]
     fn fn_tool_debug_shows_id() {
-        let tool: FnTool<()> = FnTool::new(
+        let tool: FnTool<(), FrameworkError> = FnTool::new(
             ToolInfo::new("debug_test", "test"),
             json!({}),
             Arc::new(()),
