@@ -45,6 +45,14 @@ pub struct OpenAiAuthProvider {
     pkce: std::sync::Mutex<Option<PkceChallenge>>,
 }
 
+impl std::fmt::Debug for OpenAiAuthProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiAuthProvider")
+            .field("provider_id", &self.provider_id)
+            .finish_non_exhaustive()
+    }
+}
+
 impl OpenAiAuthProvider {
     pub fn new() -> Self {
         Self {

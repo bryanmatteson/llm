@@ -165,7 +165,12 @@ impl OpenAiClient {
             Some("stop") => StopReason::EndTurn,
             Some("tool_calls") => StopReason::ToolUse,
             Some("length") => StopReason::MaxTokens,
-            _ => StopReason::Stop,
+            // A missing finish_reason in a non-streaming response typically
+            // means the turn completed normally.
+            None => StopReason::EndTurn,
+            // Unknown reason string — treat as end-of-turn rather than
+            // silently dropping content.
+            Some(_) => StopReason::EndTurn,
         }
     }
 
@@ -450,7 +455,7 @@ mod tests {
         assert_eq!(OpenAiClient::map_stop_reason(Some("stop")), StopReason::EndTurn);
         assert_eq!(OpenAiClient::map_stop_reason(Some("tool_calls")), StopReason::ToolUse);
         assert_eq!(OpenAiClient::map_stop_reason(Some("length")), StopReason::MaxTokens);
-        assert_eq!(OpenAiClient::map_stop_reason(None), StopReason::Stop);
-        assert_eq!(OpenAiClient::map_stop_reason(Some("unknown")), StopReason::Stop);
+        assert_eq!(OpenAiClient::map_stop_reason(None), StopReason::EndTurn);
+        assert_eq!(OpenAiClient::map_stop_reason(Some("unknown")), StopReason::EndTurn);
     }
 }

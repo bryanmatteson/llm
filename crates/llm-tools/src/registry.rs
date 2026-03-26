@@ -3,14 +3,16 @@ use std::sync::Arc;
 
 use llm_core::ToolId;
 
-use crate::tool::{Tool, ToolDescriptor};
+use crate::tool::{DynTool, ToolDescriptor};
 
-/// A registry that maps [`ToolId`]s to [`Tool`] implementations.
+/// A registry that maps [`ToolId`]s to tool implementations.
 ///
-/// Tools are stored behind `Arc` so they can be shared across async tasks.
+/// Tools are stored behind `Arc<dyn DynTool>` so they can be shared across
+/// async tasks. Any type that implements [`Tool`](crate::Tool) automatically
+/// implements `DynTool` and can be registered here.
 #[derive(Debug, Clone, Default)]
 pub struct ToolRegistry {
-    tools: HashMap<ToolId, Arc<dyn Tool>>,
+    tools: HashMap<ToolId, Arc<dyn DynTool>>,
 }
 
 impl ToolRegistry {
@@ -21,19 +23,19 @@ impl ToolRegistry {
 
     /// Register a tool. If a tool with the same ID already exists it will be
     /// replaced.
-    pub fn register(&mut self, tool: Arc<dyn Tool>) {
+    pub fn register(&mut self, tool: Arc<dyn DynTool>) {
         let descriptor = tool.descriptor();
         self.tools.insert(descriptor.id, tool);
     }
 
     /// Look up a tool by its [`ToolId`].
-    pub fn get(&self, id: &ToolId) -> Option<Arc<dyn Tool>> {
+    pub fn get(&self, id: &ToolId) -> Option<Arc<dyn DynTool>> {
         self.tools.get(id).cloned()
     }
 
     /// Look up a tool by its wire-format name (the name sent to the provider
     /// API).
-    pub fn get_by_wire_name(&self, name: &str) -> Option<Arc<dyn Tool>> {
+    pub fn get_by_wire_name(&self, name: &str) -> Option<Arc<dyn DynTool>> {
         self.tools
             .values()
             .find(|t| t.descriptor().wire_name == name)

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use llm_tools::{Tool, ToolDescriptor, ToolRegistry};
+use llm_tools::{DynTool, ToolDescriptor, ToolRegistry};
 
 /// Service for managing the set of available tools.
 pub struct ToolService {
@@ -29,7 +29,7 @@ impl ToolService {
     /// [`AppBuilder`](crate::builder::AppBuilder)) before the registry is
     /// shared. This method exists as a convenience for late-registered tools
     /// in tests or plugin scenarios.
-    pub fn register_tool(&mut self, tool: Arc<dyn Tool>) -> llm_core::Result<()> {
+    pub fn register_tool(&mut self, tool: Arc<dyn DynTool>) -> llm_core::Result<()> {
         match Arc::get_mut(&mut self.tool_registry) {
             Some(registry) => {
                 registry.register(tool);

@@ -6,7 +6,7 @@ use llm_store::{
     AccountStore, CredentialStore, InMemoryAccountStore, InMemoryCredentialStore,
     InMemorySessionStore, SessionStore,
 };
-use llm_tools::{Tool, ToolRegistry};
+use llm_tools::{DynTool, ToolRegistry};
 
 use crate::auth_service::AuthService;
 use crate::context::AppContext;
@@ -30,7 +30,7 @@ pub struct AppBuilder {
     account_store: Option<Arc<dyn AccountStore>>,
     session_store: Option<Arc<dyn SessionStore>>,
     registrations: Vec<ProviderRegistration>,
-    tools: Vec<Arc<dyn Tool>>,
+    tools: Vec<Arc<dyn DynTool>>,
 }
 
 impl AppBuilder {
@@ -76,7 +76,7 @@ impl AppBuilder {
     }
 
     /// Register a tool with the application.
-    pub fn register_tool(mut self, tool: Arc<dyn Tool>) -> Self {
+    pub fn register_tool(mut self, tool: Arc<dyn DynTool>) -> Self {
         self.tools.push(tool);
         self
     }

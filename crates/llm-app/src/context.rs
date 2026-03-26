@@ -23,3 +23,11 @@ pub struct AppContext {
     /// The shared provider registry.
     pub providers: Arc<ProviderRegistry>,
 }
+
+impl std::fmt::Debug for AppContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppContext")
+            .field("providers", &self.providers.list_provider_ids().len())
+            .finish_non_exhaustive()
+    }
+}

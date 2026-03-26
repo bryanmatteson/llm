@@ -154,8 +154,8 @@ impl CredentialStore for FileCredentialStore {
     }
 
     async fn credential_status(&self, provider: &ProviderId) -> Result<CredentialStatus> {
-        let has_api_key = self.api_key_path(provider).exists();
-        let has_auth_session = self.session_path(provider).exists();
+        let has_api_key = std::fs::metadata(self.api_key_path(provider)).is_ok();
+        let has_auth_session = std::fs::metadata(self.session_path(provider)).is_ok();
         Ok(CredentialStatus {
             has_api_key,
             has_auth_session,
@@ -243,10 +243,17 @@ impl SessionStore for FileSessionStore {
     }
 
     async fn list_sessions(&self) -> Result<Vec<SessionId>> {
-        Ok(list_json_stems(&self.dir)?
-            .into_iter()
-            .map(SessionId::from)
-            .collect())
+        // Read each JSON file and extract the embedded `id` rather than
+        // relying on the (possibly sanitized) filename stem.
+        let stems = list_json_stems(&self.dir)?;
+        let mut ids = Vec::with_capacity(stems.len());
+        for stem in stems {
+            let path = self.dir.join(format!("{stem}.json"));
+            if let Some(snapshot) = read_json::<SessionSnapshot>(&path)? {
+                ids.push(snapshot.id);
+            }
+        }
+        Ok(ids)
     }
 
     async fn delete_session(&self, id: &SessionId) -> Result<()> {
@@ -294,6 +301,8 @@ mod tests {
             id: SessionId::new("sess-file-1"),
             provider_id: ProviderId::new("openai"),
             model: ModelId::new("gpt-4o"),
+            system_prompt: None,
+            metadata: Default::default(),
             messages: vec![Message::user("hello from file store")],
             created_at: Utc::now(),
             updated_at: Utc::now(),

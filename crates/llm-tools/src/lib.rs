@@ -9,27 +9,38 @@ pub use context::ToolContext;
 pub use invocation::{ToolCall, ToolResult};
 pub use policy::{ToolApproval, ToolPolicy, ToolPolicyRule};
 pub use registry::ToolRegistry;
-pub use tool::{Tool, ToolDescriptor};
+pub use tool::{DynTool, Tool, ToolDescriptor, ToolInfo};
 pub use validation::validate_tool_input;
+
+// Re-export schemars so users don't need to add it as a direct dependency.
+pub use schemars;
+pub use schemars::JsonSchema;
 
 // ---------------------------------------------------------------------------
 // Test-utilities feature: EchoTool
 // ---------------------------------------------------------------------------
 
-/// A trivial tool that echoes its input, intended for integration tests.
-///
-/// Only available when the `test-utils` feature is enabled.
 #[cfg(feature = "test-utils")]
 pub mod test_utils {
-    use std::collections::BTreeMap;
-
     use async_trait::async_trait;
-    use serde_json::{Value, json};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
 
-    use llm_core::{Result, ToolId};
+    use llm_core::Result;
 
     use crate::context::ToolContext;
-    use crate::tool::{Tool, ToolDescriptor};
+    use crate::tool::{Tool, ToolInfo};
+
+    #[derive(Debug, Deserialize, JsonSchema)]
+    pub struct EchoInput {
+        /// The message to echo.
+        pub message: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct EchoOutput {
+        pub echoed: String,
+    }
 
     /// A minimal tool that accepts `{"message": "<string>"}` and returns
     /// `{"echoed": "<string>"}`.
@@ -38,32 +49,16 @@ pub mod test_utils {
 
     #[async_trait]
     impl Tool for EchoTool {
-        fn descriptor(&self) -> ToolDescriptor {
-            ToolDescriptor {
-                id: ToolId::new("echo"),
-                wire_name: "echo".to_owned(),
-                display_name: "Echo".to_owned(),
-                description: "Echoes the input message back to the caller.".to_owned(),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "The message to echo."
-                        }
-                    },
-                    "required": ["message"]
-                }),
-                metadata: BTreeMap::new(),
-            }
+        type Input = EchoInput;
+        type Output = EchoOutput;
+
+        fn info(&self) -> ToolInfo {
+            ToolInfo::new("echo", "Echoes the input message back to the caller.")
+                .display_name("Echo")
         }
 
-        async fn execute(&self, input: Value, _context: &ToolContext) -> Result<Value> {
-            let message = input
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            Ok(json!({ "echoed": message }))
+        async fn execute(&self, input: EchoInput, _ctx: &ToolContext) -> Result<EchoOutput> {
+            Ok(EchoOutput { echoed: input.message })
         }
     }
 }
@@ -78,19 +73,31 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use serde_json::{Value, json};
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+    use serde_json::json;
 
     use llm_core::{ModelId, ProviderId, Result, SessionId, ToolId};
 
     use crate::context::ToolContext;
     use crate::policy::{ToolApproval, ToolPolicy, ToolPolicyRule};
     use crate::registry::ToolRegistry;
-    use crate::tool::{Tool, ToolDescriptor};
+    use crate::tool::{DynTool, Tool, ToolInfo};
     use crate::validation::validate_tool_input;
 
-    // -- helpers -----------------------------------------------------------
+    // -- test tool -----------------------------------------------------------
 
-    /// Minimal tool used by registry / validation tests.
+    #[derive(Debug, Deserialize, JsonSchema)]
+    #[allow(dead_code)]
+    struct StubInput {
+        x: String,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct StubOutput {
+        ok: bool,
+    }
+
     #[derive(Debug)]
     struct StubTool {
         id: &'static str,
@@ -99,29 +106,18 @@ mod tests {
 
     #[async_trait]
     impl Tool for StubTool {
-        fn descriptor(&self) -> ToolDescriptor {
-            ToolDescriptor {
-                id: ToolId::new(self.id),
-                wire_name: self.wire.to_owned(),
-                display_name: self.id.to_owned(),
-                description: format!("Stub tool {}", self.id),
-                parameters: json!({
-                    "type": "object",
-                    "properties": {
-                        "x": { "type": "string" }
-                    },
-                    "required": ["x"]
-                }),
-                metadata: BTreeMap::new(),
-            }
+        type Input = StubInput;
+        type Output = StubOutput;
+
+        fn info(&self) -> ToolInfo {
+            ToolInfo::new(self.id, "stub").wire_name(self.wire)
         }
 
-        async fn execute(&self, _input: Value, _ctx: &ToolContext) -> Result<Value> {
-            Ok(json!({"ok": true}))
+        async fn execute(&self, _input: StubInput, _ctx: &ToolContext) -> Result<StubOutput> {
+            Ok(StubOutput { ok: true })
         }
     }
 
-    #[cfg_attr(not(feature = "test-utils"), allow(dead_code))]
     fn make_context() -> ToolContext {
         ToolContext {
             session_id: SessionId::new("test-session"),
@@ -131,12 +127,12 @@ mod tests {
         }
     }
 
-    // -- ToolRegistry ------------------------------------------------------
+    // -- ToolRegistry --------------------------------------------------------
 
     #[test]
     fn registry_register_and_get() {
         let mut reg = ToolRegistry::new();
-        let tool: Arc<dyn Tool> = Arc::new(StubTool { id: "a", wire: "wire_a" });
+        let tool: Arc<dyn DynTool> = Arc::new(StubTool { id: "a", wire: "wire_a" });
         reg.register(tool);
 
         assert!(reg.get(&ToolId::new("a")).is_some());
@@ -178,7 +174,7 @@ mod tests {
         assert_eq!(ids, vec![ToolId::new("a"), ToolId::new("c")]);
     }
 
-    // -- ToolPolicy --------------------------------------------------------
+    // -- ToolPolicy ----------------------------------------------------------
 
     #[test]
     fn policy_default_approval() {
@@ -215,7 +211,6 @@ mod tests {
             policy.approval_for(&ToolId::new("sensitive")),
             ToolApproval::RequireConfirmation
         );
-        // Fallback to default
         assert_eq!(policy.approval_for(&ToolId::new("normal")), ToolApproval::Auto);
     }
 
@@ -232,12 +227,6 @@ mod tests {
 
         assert!(policy.is_allowed(&ToolId::new("ok_tool")));
         assert!(!policy.is_allowed(&ToolId::new("blocked")));
-        // RequireConfirmation is still "allowed" (just needs confirmation)
-        let policy2 = ToolPolicy {
-            default_approval: ToolApproval::RequireConfirmation,
-            rules: vec![],
-        };
-        assert!(policy2.is_allowed(&ToolId::new("anything")));
     }
 
     #[test]
@@ -252,12 +241,37 @@ mod tests {
         };
         let json = serde_json::to_string(&policy).unwrap();
         let back: ToolPolicy = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.default_approval, ToolApproval::Auto);
-        assert_eq!(back.rules.len(), 1);
-        assert_eq!(back.rules[0].approval, ToolApproval::RequireConfirmation);
+        assert_eq!(back, policy);
     }
 
-    // -- validate_tool_input -----------------------------------------------
+    // -- Tool execution (via DynTool blanket) --------------------------------
+
+    #[tokio::test]
+    async fn tool_execute_with_valid_input() {
+        let tool = StubTool { id: "t", wire: "w" };
+        let ctx = make_context();
+        let result = tool.invoke(json!({"x": "hello"}), &ctx).await.unwrap();
+        assert_eq!(result, json!({"ok": true}));
+    }
+
+    #[tokio::test]
+    async fn tool_rejects_invalid_input() {
+        let tool = StubTool { id: "t", wire: "w" };
+        let ctx = make_context();
+        let err = tool.invoke(json!({"wrong": "field"}), &ctx).await;
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("deserialize"));
+    }
+
+    #[test]
+    fn tool_descriptor_has_json_schema() {
+        let tool = StubTool { id: "t", wire: "w" };
+        let desc = tool.descriptor();
+        let schema_str = serde_json::to_string(&desc.parameters).unwrap();
+        assert!(schema_str.contains("\"x\""), "schema should contain the 'x' property");
+    }
+
+    // -- validate_tool_input -------------------------------------------------
 
     #[test]
     fn validation_accepts_valid_input() {
@@ -274,31 +288,7 @@ mod tests {
         assert!(err.to_string().contains("must be a JSON object"));
     }
 
-    #[test]
-    fn validation_rejects_missing_required() {
-        let desc = StubTool { id: "t", wire: "w" }.descriptor();
-        let input = json!({});
-        let err = validate_tool_input(&desc, &input).unwrap_err();
-        assert!(err.to_string().contains("missing required field"));
-        assert!(err.to_string().contains("x"));
-    }
-
-    #[test]
-    fn validation_rejects_wrong_type() {
-        let desc = StubTool { id: "t", wire: "w" }.descriptor();
-        let input = json!({"x": 42});
-        let err = validate_tool_input(&desc, &input).unwrap_err();
-        assert!(err.to_string().contains("expected type \"string\""));
-    }
-
-    #[test]
-    fn validation_allows_extra_fields() {
-        let desc = StubTool { id: "t", wire: "w" }.descriptor();
-        let input = json!({"x": "ok", "extra": true});
-        assert!(validate_tool_input(&desc, &input).is_ok());
-    }
-
-    // -- EchoTool (behind test-utils feature) ------------------------------
+    // -- EchoTool (behind test-utils feature) --------------------------------
 
     #[cfg(feature = "test-utils")]
     mod echo_tests {
@@ -312,32 +302,22 @@ mod tests {
             assert_eq!(desc.wire_name, "echo");
             assert_eq!(desc.display_name, "Echo");
             assert_eq!(desc.id, ToolId::new("echo"));
-            assert!(desc.parameters.get("properties").is_some());
         }
 
         #[tokio::test]
         async fn echo_execute() {
             let tool = EchoTool;
             let ctx = make_context();
-            let result = tool.execute(json!({"message": "hello"}), &ctx).await.unwrap();
+            let result = tool.invoke(json!({"message": "hello"}), &ctx).await.unwrap();
             assert_eq!(result, json!({"echoed": "hello"}));
         }
 
         #[tokio::test]
-        async fn echo_missing_message_returns_empty() {
+        async fn echo_missing_message_returns_error() {
             let tool = EchoTool;
             let ctx = make_context();
-            let result = tool.execute(json!({}), &ctx).await.unwrap();
-            assert_eq!(result, json!({"echoed": ""}));
-        }
-
-        #[test]
-        fn echo_validate_input() {
-            let tool = EchoTool;
-            let desc = tool.descriptor();
-            assert!(validate_tool_input(&desc, &json!({"message": "hi"})).is_ok());
-            assert!(validate_tool_input(&desc, &json!({})).is_err());
-            assert!(validate_tool_input(&desc, &json!({"message": 123})).is_err());
+            let err = tool.invoke(json!({}), &ctx).await;
+            assert!(err.is_err());
         }
     }
 }

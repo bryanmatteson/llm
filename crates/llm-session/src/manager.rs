@@ -76,6 +76,8 @@ impl SessionManager for DefaultSessionManager {
             id: handle.id.clone(),
             provider_id: handle.config.provider_id.clone(),
             model: handle.config.model.clone().unwrap_or_else(|| ModelId::new("unknown")),
+            system_prompt: handle.config.system_prompt.clone(),
+            metadata: handle.config.metadata.clone(),
             messages: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -93,10 +95,10 @@ impl SessionManager for DefaultSessionManager {
                 let config = SessionConfig {
                     provider_id: snap.provider_id,
                     model: Some(snap.model),
-                    system_prompt: None,
+                    system_prompt: snap.system_prompt,
                     tool_policy: Default::default(),
                     limits: Default::default(),
-                    metadata: Default::default(),
+                    metadata: snap.metadata,
                 };
                 let mut conversation = ConversationState::new();
                 for msg in snap.messages {

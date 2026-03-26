@@ -293,7 +293,7 @@ pub async fn run_turn_loop(
 
                     let exec_result = match tokio::time::timeout(
                         config.limits.tool_timeout,
-                        tool.execute(arguments.clone(), &tool_context),
+                        tool.invoke(arguments.clone(), &tool_context),
                     )
                     .await
                     {
