@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use llm_auth::AuthSession;
+use llm_config::SessionDefaults;
 use llm_core::{FrameworkError, Message, ProviderId, Result, SessionId};
 use llm_session::{
     AutoApproveHandler, EventReceiver, EventSender, SessionConfig, SessionHandle, SessionManager,
-    TurnOutcome, event_channel, run_turn_loop,
+    TurnLoopContext, TurnOutcome, event_channel, run_turn_loop,
 };
-use llm_tools::ToolRegistry;
+use llm_tools::{ToolPolicy, ToolRegistry};
 
 use crate::registry::ProviderRegistry;
 
@@ -15,6 +16,12 @@ pub struct SessionService {
     provider_registry: Arc<ProviderRegistry>,
     session_manager: Arc<dyn SessionManager>,
     tool_registry: Arc<ToolRegistry>,
+    /// Session defaults from the application config (if loaded).
+    session_defaults: Option<SessionDefaults>,
+    /// Default tool policy derived from the application config (if loaded).
+    default_tool_policy: Option<ToolPolicy>,
+    /// Default provider from the application config (if set).
+    default_provider: Option<ProviderId>,
 }
 
 impl SessionService {
@@ -23,12 +30,33 @@ impl SessionService {
         provider_registry: Arc<ProviderRegistry>,
         session_manager: Arc<dyn SessionManager>,
         tool_registry: Arc<ToolRegistry>,
+        session_defaults: Option<SessionDefaults>,
+        default_tool_policy: Option<ToolPolicy>,
+        default_provider: Option<ProviderId>,
     ) -> Self {
         Self {
             provider_registry,
             session_manager,
             tool_registry,
+            session_defaults,
+            default_tool_policy,
+            default_provider,
         }
+    }
+
+    /// Returns the default provider ID from the application config, if set.
+    pub fn default_provider(&self) -> Option<&ProviderId> {
+        self.default_provider.as_ref()
+    }
+
+    /// Returns the session defaults from the application config, if loaded.
+    pub fn session_defaults(&self) -> Option<&SessionDefaults> {
+        self.session_defaults.as_ref()
+    }
+
+    /// Returns the default tool policy derived from config, if loaded.
+    pub fn default_tool_policy(&self) -> Option<&ToolPolicy> {
+        self.default_tool_policy.as_ref()
     }
 
     /// Create a new conversation session.
@@ -116,17 +144,20 @@ impl SessionService {
         let (tx, _rx) = event_channel();
         let approval_handler = AutoApproveHandler;
 
-        let outcome = run_turn_loop(
+        let outcome = run_turn_loop(TurnLoopContext {
             session_id,
-            client.as_ref(),
-            &mut handle.conversation,
-            &self.tool_registry,
-            registration.tool_adapter.as_ref(),
-            &handle.config,
-            &approval_handler,
-            Some(&tx),
-        )
+            client: client.as_ref(),
+            conversation: &mut handle.conversation,
+            tool_registry: &self.tool_registry,
+            tool_adapter: registration.tool_adapter.as_ref(),
+            config: &handle.config,
+            approval_handler: &approval_handler,
+            event_tx: Some(&tx),
+        })
         .await?;
+
+        // Accumulate this turn's usage into the session's lifetime total.
+        handle.total_usage.accumulate(&outcome.usage);
 
         Ok(outcome)
     }

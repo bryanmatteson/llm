@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use chrono::Utc;
-use llm_core::{FrameworkError, ModelId, Result, SessionId};
+use llm_core::{FrameworkError, ModelId, Result, SessionId, TokenUsage};
 use llm_store::{SessionSnapshot, SessionStore};
 
 use crate::config::SessionConfig;
@@ -19,6 +19,8 @@ pub struct SessionHandle {
     pub config: SessionConfig,
     /// The mutable conversation transcript.
     pub conversation: ConversationState,
+    /// Cumulative token usage across all `send_message` calls for this session.
+    pub total_usage: TokenUsage,
 }
 
 /// Async trait for creating and retrieving sessions.
@@ -71,6 +73,7 @@ impl SessionManager for DefaultSessionManager {
             id,
             config,
             conversation: ConversationState::new(),
+            total_usage: TokenUsage::default(),
         };
         let snapshot = SessionSnapshot {
             id: handle.id.clone(),
@@ -108,6 +111,7 @@ impl SessionManager for DefaultSessionManager {
                     id: snap.id,
                     config,
                     conversation,
+                    total_usage: TokenUsage::default(),
                 }))
             }
             None => Ok(None),

@@ -4,22 +4,41 @@ use llm_core::{FrameworkError, Result};
 
 use crate::app::AppConfig;
 
+/// Loads and saves [`AppConfig`] from TOML files.
+///
+/// This is a pure utility — it takes explicit paths and never assumes a
+/// default location.  The *application* (CLI binary, GUI shell, etc.)
+/// decides where config files live; the library only reads and writes.
 pub struct ConfigLoader;
 
 impl ConfigLoader {
+    /// Load an [`AppConfig`] from a TOML file at `path`.
     pub fn load_from_file(path: &Path) -> Result<AppConfig> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
             FrameworkError::config(format!("failed to read config file {}: {e}", path.display()))
         })?;
-        let config: AppConfig = toml::from_str(&contents).map_err(|e| {
-            FrameworkError::config(format!(
-                "failed to parse config file {}: {e}",
-                path.display()
-            ))
-        })?;
-        Ok(config)
+        Self::parse(&contents)
     }
 
+    /// Parse an [`AppConfig`] from a TOML string.
+    pub fn parse(toml: &str) -> Result<AppConfig> {
+        toml::from_str(toml).map_err(|e| {
+            FrameworkError::config(format!("failed to parse TOML config: {e}"))
+        })
+    }
+
+    /// Try to load from `path`, returning `Ok(None)` if the file does not
+    /// exist.
+    pub fn load_optional(path: &Path) -> Result<Option<AppConfig>> {
+        if path.exists() {
+            Ok(Some(Self::load_from_file(path)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Serialize `config` and write it to `path`, creating parent directories
+    /// as needed.
     pub fn save_to_file(config: &AppConfig, path: &Path) -> Result<()> {
         let contents = toml::to_string_pretty(config).map_err(|e| {
             FrameworkError::config(format!("failed to serialize config: {e}"))

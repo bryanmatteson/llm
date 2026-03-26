@@ -931,6 +931,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "llm-provider-google"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "llm-auth",
+ "llm-core",
+ "llm-provider-api",
+ "llm-tools",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "url",
+]
+
+[[package]]
 name = "llm-provider-openai"
 version = "0.1.0"
 dependencies = [

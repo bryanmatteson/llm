@@ -4,7 +4,7 @@ use clap::{Args, Subcommand};
 
 use llm_core::{FrameworkError, ModelId, ProviderId, Result};
 use llm_provider_openai::{OpenAiClient, OpenAiToolFormat};
-use llm_session::{SessionConfig, SessionHandle, event_channel, run_turn_loop};
+use llm_session::{SessionConfig, SessionHandle, TurnLoopContext, event_channel, run_turn_loop};
 
 use llm_cli::approval::CliApprovalHandler;
 use crate::bootstrap::AppContext;
@@ -174,16 +174,16 @@ async fn interactive_loop(
             render_session_events(&mut rx).await;
         });
 
-        let outcome = run_turn_loop(
-            &handle.id,
-            &client,
-            &mut handle.conversation,
-            &ctx.tool_registry,
-            &adapter,
-            &handle.config,
-            &approval,
-            Some(&tx),
-        )
+        let outcome = run_turn_loop(TurnLoopContext {
+            session_id: &handle.id,
+            client: &client,
+            conversation: &mut handle.conversation,
+            tool_registry: &ctx.tool_registry,
+            tool_adapter: &adapter,
+            config: &handle.config,
+            approval_handler: &approval,
+            event_tx: Some(&tx),
+        })
         .await;
 
         // Drop sender so the render task can finish.

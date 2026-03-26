@@ -517,9 +517,10 @@ let dto: EventDto = SessionEventAdapter::adapt_event(&event_json);
 | `llm-config` | TOML configuration loading | `AppConfig`, `ProviderConfig`, `SessionDefaults` |
 | `llm-store` | Pluggable persistence | `CredentialStore`, `SessionStore`, `AccountStore`, `InMemorySessionStore`, `FileSessionStore` |
 | `llm-provider-api` | Provider client trait | `LlmProviderClient`, `TurnRequest`, `TurnResponse`, `ProviderEvent`, `ToolSchemaAdapter` |
-| `llm-session` | Turn-loop orchestration | `SessionBuilder`, `SessionConfig`, `SessionHandle`, `SessionManager`, `run_turn_loop`, `TurnOutcome`, `SessionEvent`, `ApprovalHandler` |
+| `llm-session` | Turn-loop orchestration | `SessionBuilder`, `SessionConfig`, `SessionHandle`, `SessionManager`, `run_turn_loop`, `run_streaming_turn_loop`, `TurnOutcome`, `SessionEvent`, `ApprovalHandler` |
 | `llm-provider-openai` | OpenAI provider | `OpenAiClient`, `OpenAiAuthProvider`, `OpenAiToolFormat` |
-| `llm-provider-anthropic` | Anthropic provider | (same pattern as OpenAI) |
+| `llm-provider-anthropic` | Anthropic/Claude provider | `AnthropicClient`, `AnthropicAuthProvider`, `AnthropicToolFormat` |
+| `llm-provider-google` | Google/Gemini provider | `GoogleClient`, `GoogleAuthProvider`, `GoogleToolFormat` |
 | `llm-app` | Application wiring | `AppBuilder`, `AppContext`, `ProviderRegistration`, `ProviderClientFactory`, `AuthService`, `SessionService` |
 | `llm-cli` | Terminal utilities | `CliApprovalHandler`, `run_terminal_questionnaire`, `render_session_events` |
 | `llm-gui-api` | GUI facade + DTOs | `GuiFacade`, `ProviderDto`, `SessionDto`, `ToolDto`, `EventDto`, `SessionEventAdapter` |

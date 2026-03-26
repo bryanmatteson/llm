@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
+use llm_config::AppConfig;
 use llm_core::Result;
 use llm_session::{DefaultSessionManager, SessionManager};
 use llm_store::{
     AccountStore, CredentialStore, InMemoryAccountStore, InMemoryCredentialStore,
     InMemorySessionStore, SessionStore,
 };
-use llm_tools::{DynTool, ToolRegistry};
+use llm_tools::{DynTool, ToolApproval, ToolPolicyBuilder, ToolRegistry};
 
 use crate::auth_service::AuthService;
 use crate::context::AppContext;
@@ -31,6 +32,7 @@ pub struct AppBuilder {
     session_store: Option<Arc<dyn SessionStore>>,
     registrations: Vec<ProviderRegistration>,
     tools: Vec<Arc<dyn DynTool>>,
+    config: Option<AppConfig>,
 }
 
 impl AppBuilder {
@@ -42,6 +44,7 @@ impl AppBuilder {
             session_store: None,
             registrations: Vec::new(),
             tools: Vec::new(),
+            config: None,
         }
     }
 
@@ -81,6 +84,15 @@ impl AppBuilder {
         self
     }
 
+    /// Apply an [`AppConfig`] to this builder.
+    ///
+    /// This sets session defaults and tool policies from the config file.
+    /// Provider registrations and stores must still be set explicitly.
+    pub fn with_config(mut self, config: &AppConfig) -> Self {
+        self.config = Some(config.clone());
+        self
+    }
+
     /// Consume the builder and produce a fully wired [`AppContext`].
     ///
     /// Returns an error if the resulting configuration is invalid (e.g. no
@@ -116,6 +128,32 @@ impl AppBuilder {
         }
         let tool_registry = Arc::new(tool_registry);
 
+        // -- Apply config (if provided) --------------------------------------
+
+        let default_tool_policy = if let Some(ref cfg) = self.config {
+            let mut builder = ToolPolicyBuilder::new();
+            if cfg.session_defaults.tool_confirmation_required {
+                builder = builder.default(ToolApproval::RequireConfirmation);
+            }
+            for tp in &cfg.tool_policies {
+                let approval = if !tp.allowed {
+                    ToolApproval::Deny
+                } else if tp.require_confirmation {
+                    ToolApproval::RequireConfirmation
+                } else {
+                    ToolApproval::Auto
+                };
+                builder = builder.rule(
+                    tp.tool_id.as_str(),
+                    approval,
+                    tp.max_calls_per_session.map(|n| n as u32),
+                );
+            }
+            Some(builder.build())
+        } else {
+            None
+        };
+
         // -- Session manager -------------------------------------------------
 
         let session_manager: Arc<dyn SessionManager> =
@@ -133,6 +171,9 @@ impl AppBuilder {
             Arc::clone(&registry),
             session_manager,
             Arc::clone(&tool_registry),
+            self.config.as_ref().map(|c| c.session_defaults.clone()),
+            default_tool_policy,
+            self.config.as_ref().and_then(|c| c.default_provider.clone()),
         );
 
         let questionnaires = QuestionnaireService::new();
@@ -145,6 +186,7 @@ impl AppBuilder {
             questionnaires,
             tools,
             providers: registry,
+            config: self.config,
         })
     }
 }

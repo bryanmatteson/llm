@@ -11,6 +11,7 @@ members = [
     "crates/llm-session",
     "crates/llm-provider-openai",
     "crates/llm-provider-anthropic",
+    "crates/llm-provider-google",
     "crates/llm-app",
     "crates/llm-cli",
     "crates/llm-gui-api",
@@ -31,6 +32,7 @@ llm-provider-api = { path = "crates/llm-provider-api" }
 llm-session = { path = "crates/llm-session" }
 llm-provider-openai = { path = "crates/llm-provider-openai" }
 llm-provider-anthropic = { path = "crates/llm-provider-anthropic" }
+llm-provider-google = { path = "crates/llm-provider-google" }
 llm-app = { path = "crates/llm-app" }
 llm-gui-api = { path = "crates/llm-gui-api" }
 

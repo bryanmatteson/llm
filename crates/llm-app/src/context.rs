@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use llm_config::AppConfig;
+
 use crate::auth_service::AuthService;
 use crate::questionnaire_service::QuestionnaireService;
 use crate::registry::ProviderRegistry;
@@ -22,6 +24,8 @@ pub struct AppContext {
     pub tools: ToolService,
     /// The shared provider registry.
     pub providers: Arc<ProviderRegistry>,
+    /// Optional application config loaded from file or supplied programmatically.
+    pub config: Option<AppConfig>,
 }
 
 impl std::fmt::Debug for AppContext {
