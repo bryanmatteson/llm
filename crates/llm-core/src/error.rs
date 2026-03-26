@@ -94,4 +94,15 @@ impl FrameworkError {
             reason: reason.into(),
         }
     }
+
+    /// Returns `true` if the error is transient and the request may succeed
+    /// on retry (e.g. HTTP 429 rate-limit or 503 service unavailable).
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            Self::Provider { message, .. } => {
+                message.starts_with("HTTP 429") || message.starts_with("HTTP 503")
+            }
+            _ => false,
+        }
+    }
 }

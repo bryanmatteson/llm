@@ -28,3 +28,15 @@ pub struct LlmConfig {
     #[kdl(children, name = "tool-policy", default)]
     pub tool_policies: Vec<ToolPolicyConfig>,
 }
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            default_provider: None,
+            data_dir: None,
+            providers: Vec::new(),
+            session_defaults: SessionDefaults::default(),
+            tool_policies: Vec::new(),
+        }
+    }
+}

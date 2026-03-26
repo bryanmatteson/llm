@@ -1,4 +1,5 @@
 pub mod context;
+pub mod fn_tool;
 pub mod invocation;
 pub mod policy;
 pub mod registry;
@@ -6,6 +7,7 @@ pub mod tool;
 pub mod validation;
 
 pub use context::ToolContext;
+pub use fn_tool::FnTool;
 pub use invocation::{ToolCall, ToolResult};
 pub use policy::{ToolApproval, ToolPolicy, ToolPolicyBuilder, ToolPolicyRule};
 pub use registry::ToolRegistry;

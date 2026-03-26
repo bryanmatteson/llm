@@ -13,6 +13,10 @@ openai    = ["dep:llm-provider-openai"]
 anthropic = ["dep:llm-provider-anthropic"]
 google    = ["dep:llm-provider-google"]
 
+# MCP server
+mcp = ["dep:llm-mcp"]
+mcp-sse = ["mcp", "llm-mcp/sse"]
+
 # Frontend adapters
 cli = ["dep:llm-cli"]
 gui = ["dep:llm-gui-api"]
@@ -33,6 +37,9 @@ llm-app           = { workspace = true }
 llm-provider-openai     = { workspace = true, optional = true }
 llm-provider-anthropic  = { workspace = true, optional = true }
 llm-provider-google     = { workspace = true, optional = true }
+
+# Optional MCP server
+llm-mcp     = { workspace = true, optional = true }
 
 # Optional frontend adapters
 llm-cli     = { workspace = true, optional = true }

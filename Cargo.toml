@@ -13,6 +13,7 @@
         "crates/llm-provider-anthropic",
         "crates/llm-provider-google",
         "crates/llm-app",
+        "crates/llm-mcp",
         "crates/llm-cli",
         "crates/llm-gui-api",
         "crates/llm",
@@ -35,6 +36,7 @@
     llm-provider-anthropic = { path = "crates/llm-provider-anthropic" }
     llm-provider-google    = { path = "crates/llm-provider-google" }
     llm-app                = { path = "crates/llm-app" }
+    llm-mcp                = { path = "crates/llm-mcp" }
     llm-cli                = { path = "crates/llm-cli" }
     llm-gui-api            = { path = "crates/llm-gui-api" }
     llm                    = { path = "crates/llm" }

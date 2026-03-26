@@ -45,3 +45,25 @@ pub trait LlmProviderClient: Send + Sync {
     /// List the models available from this provider.
     async fn list_models(&self) -> Result<Vec<ModelDescriptor>>;
 }
+
+#[async_trait]
+impl LlmProviderClient for Box<dyn LlmProviderClient> {
+    fn provider_id(&self) -> &ProviderId {
+        (**self).provider_id()
+    }
+
+    async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
+        (**self).send_turn(request).await
+    }
+
+    async fn stream_turn(
+        &self,
+        request: &TurnRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>> {
+        (**self).stream_turn(request).await
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelDescriptor>> {
+        (**self).list_models().await
+    }
+}

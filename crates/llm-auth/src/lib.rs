@@ -1,4 +1,5 @@
 pub mod api_key;
+pub mod discover;
 pub mod oauth;
 pub mod provider;
 pub mod token;
@@ -6,6 +7,10 @@ pub mod token;
 // ── Re-exports ───────────────────────────────────────────────────────
 
 pub use api_key::{ApiKeyResolver, ApiKeyStore};
+pub use discover::{
+    CredentialKind, EnvCredentialDiscovery, ProviderCredential, ProviderEnvConfig,
+    build_auth_session,
+};
 pub use oauth::{
     OAuthEndpoints, OAuthFlow, OAuthTokenResponse, PkceChallenge, RedirectStrategy, build_auth_url,
     generate_state, redirect_uri_for,

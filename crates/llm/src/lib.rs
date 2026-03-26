@@ -59,6 +59,12 @@ pub use llm_provider_anthropic as anthropic;
 #[cfg(feature = "google")]
 pub use llm_provider_google as google;
 
+// ── MCP server (feature-gated) ────────────────────────────────────
+
+/// Generic MCP server skeleton: protocol handler, tool dispatch, transports.
+#[cfg(feature = "mcp")]
+pub use llm_mcp as mcp;
+
 // ── Frontend adapters (feature-gated) ──────────────────────────────
 
 /// Terminal utilities: questionnaire renderer, stream renderer, approval handler.
@@ -80,12 +86,15 @@ pub use llm_core::{
 };
 
 pub use llm_app::{AppBuilder, LlmContext};
-pub use llm_auth::AuthSession;
-pub use llm_provider_api::LlmProviderClient;
+pub use llm_auth::{
+    AuthSession, CredentialKind, EnvCredentialDiscovery, ProviderCredential,
+    build_auth_session as build_auth_session_from_credential,
+};
+pub use llm_provider_api::{LlmProviderClient, RetryConfig, RetryingClient};
 pub use llm_questionnaire::{AnswerMap, AnswerValue, QuestionnaireBuilder, QuestionnaireRun};
 pub use llm_session::{
     ConversationState, EventReceiver, EventSender, SessionEvent, SessionHandle, TurnLoopContext,
     TurnOutcome,
 };
 pub use llm_store::{CredentialStore, SessionStore};
-pub use llm_tools::{DynTool, Tool, ToolDescriptor, ToolRegistry};
+pub use llm_tools::{DynTool, FnTool, Tool, ToolDescriptor, ToolInfo, ToolRegistry};

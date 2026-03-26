@@ -1,10 +1,12 @@
 pub mod adapter;
 pub mod client;
 pub mod event;
+pub mod retry;
 
 pub use adapter::{ProviderToolCall, ProviderToolDescriptor, ToolSchemaAdapter};
 pub use client::{LlmProviderClient, TurnRequest, TurnResponse};
 pub use event::ProviderEvent;
+pub use retry::{RetryConfig, RetryingClient};
 
 #[cfg(test)]
 mod tests {
