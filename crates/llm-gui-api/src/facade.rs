@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use llm_app::AppContext;
+use llm_app::LlmContext;
 use llm_core::{FrameworkError, ModelId, ProviderDescriptor, ProviderId, Result};
 
 use crate::dto::{AuthStatusDto, EventDto, ProviderDto, SessionDto, ToolDto};
@@ -24,12 +24,12 @@ use crate::events::SessionEventAdapter;
 /// load, etc.) and returns DTOs that are ready to serialise over the wire.
 #[derive(Clone)]
 pub struct GuiFacade {
-    ctx: Arc<AppContext>,
+    ctx: Arc<LlmContext>,
 }
 
 impl GuiFacade {
     /// Create a new facade backed by the given application context.
-    pub fn new(ctx: Arc<AppContext>) -> Self {
+    pub fn new(ctx: Arc<LlmContext>) -> Self {
         Self { ctx }
     }
 

@@ -76,16 +76,16 @@ pub use llm_gui_api as gui;
 
 pub use llm_core::{
     FrameworkError, Message, Metadata, ModelId, ProviderId, Result, SessionConfig, SessionId,
-    SessionLimits, StopReason, ToolApproval, ToolId, ToolPolicy, ToolPolicyBuilder, TokenUsage,
+    SessionLimits, StopReason, TokenUsage, ToolApproval, ToolId, ToolPolicy, ToolPolicyBuilder,
 };
 
-pub use llm_app::{AppBuilder, AppContext};
+pub use llm_app::{AppBuilder, LlmContext};
+pub use llm_auth::AuthSession;
+pub use llm_provider_api::LlmProviderClient;
+pub use llm_questionnaire::{AnswerMap, AnswerValue, QuestionnaireBuilder, QuestionnaireRun};
 pub use llm_session::{
     ConversationState, EventReceiver, EventSender, SessionEvent, SessionHandle, TurnLoopContext,
     TurnOutcome,
 };
-pub use llm_tools::{DynTool, Tool, ToolDescriptor, ToolRegistry};
-pub use llm_questionnaire::{AnswerMap, AnswerValue, QuestionnaireBuilder, QuestionnaireRun};
 pub use llm_store::{CredentialStore, SessionStore};
-pub use llm_provider_api::LlmProviderClient;
-pub use llm_auth::AuthSession;
+pub use llm_tools::{DynTool, Tool, ToolDescriptor, ToolRegistry};

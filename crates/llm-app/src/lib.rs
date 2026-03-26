@@ -10,7 +10,7 @@ pub mod tool_service;
 
 pub use auth_service::AuthService;
 pub use builder::AppBuilder;
-pub use context::AppContext;
+pub use context::LlmContext;
 pub use questionnaire_service::QuestionnaireService;
 pub use registry::{ProviderClientFactory, ProviderRegistration, ProviderRegistry};
 pub use session_service::SessionService;

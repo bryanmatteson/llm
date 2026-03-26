@@ -11,7 +11,7 @@ use llm_store::{
 use llm_tools::{DynTool, ToolApproval, ToolPolicyBuilder, ToolRegistry};
 
 use crate::auth_service::AuthService;
-use crate::context::AppContext;
+use crate::context::LlmContext;
 use crate::questionnaire_service::QuestionnaireService;
 use crate::registry::{ProviderRegistration, ProviderRegistry};
 use crate::session_service::SessionService;
@@ -113,7 +113,7 @@ impl AppBuilder {
     ///
     /// Returns an error if the resulting configuration is invalid (e.g. no
     /// providers registered).
-    pub fn build(self) -> Result<AppContext> {
+    pub fn build(self) -> Result<LlmContext> {
         // -- Stores ----------------------------------------------------------
 
         let credential_store: Arc<dyn CredentialStore> = self
@@ -198,7 +198,7 @@ impl AppBuilder {
 
         let tools = ToolService::new(tool_registry);
 
-        Ok(AppContext {
+        Ok(LlmContext {
             auth,
             sessions,
             questionnaires,

@@ -13,7 +13,7 @@ use crate::tool_service::ToolService;
 /// An `AppContext` is built once via [`AppBuilder`](crate::builder::AppBuilder)
 /// and then shared (typically behind an `Arc`) with every component of the
 /// application.
-pub struct AppContext {
+pub struct LlmContext {
     /// Authentication service for login/logout/discovery.
     pub auth: AuthService,
     /// Session service for creating sessions and driving the turn loop.
@@ -28,7 +28,7 @@ pub struct AppContext {
     pub config: Option<LlmConfig>,
 }
 
-impl std::fmt::Debug for AppContext {
+impl std::fmt::Debug for LlmContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppContext")
             .field("providers", &self.providers.list_provider_ids().len())
