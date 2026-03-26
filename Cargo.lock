@@ -902,6 +902,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "llm-provider-anthropic"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "llm-auth",
+ "llm-core",
+ "llm-provider-api",
+ "llm-tools",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "llm-provider-api"
 version = "0.1.0"
 dependencies = [

@@ -2,7 +2,7 @@ use clap::{Args, Subcommand};
 
 use llm_core::{FrameworkError, Result, ToolId};
 
-use llm_cli::bootstrap::AppContext;
+use crate::bootstrap::AppContext;
 
 #[derive(Args)]
 pub struct ToolsArgs {

@@ -1,8 +1,7 @@
+mod bootstrap;
 mod commands;
 
 use clap::{Parser, Subcommand};
-
-use llm_cli::bootstrap;
 
 use crate::commands::auth::AuthArgs;
 use crate::commands::debug::DebugArgs;

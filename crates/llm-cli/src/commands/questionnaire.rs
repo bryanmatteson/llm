@@ -5,7 +5,7 @@ use llm_questionnaire::{
     ChoiceOption, Question, QuestionId, QuestionKind, Questionnaire, QuestionnaireId,
 };
 
-use llm_cli::bootstrap::AppContext;
+use crate::bootstrap::AppContext;
 use llm_cli::render::questionnaire::run_terminal_questionnaire;
 
 #[derive(Args)]

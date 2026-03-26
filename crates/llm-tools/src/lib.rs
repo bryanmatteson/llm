@@ -7,7 +7,7 @@ pub mod validation;
 
 pub use context::ToolContext;
 pub use invocation::{ToolCall, ToolResult};
-pub use policy::{ToolApproval, ToolPolicy, ToolPolicyRule};
+pub use policy::{ToolApproval, ToolPolicy, ToolPolicyBuilder, ToolPolicyRule};
 pub use registry::ToolRegistry;
 pub use tool::{DynTool, Tool, ToolDescriptor, ToolInfo};
 pub use validation::validate_tool_input;
@@ -239,6 +239,55 @@ mod tests {
                 max_calls_per_session: Some(10),
             }],
         };
+        let json = serde_json::to_string(&policy).unwrap();
+        let back: ToolPolicy = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, policy);
+    }
+
+    // -- ToolPolicyBuilder ---------------------------------------------------
+
+    #[test]
+    fn policy_builder_defaults_to_auto() {
+        use crate::policy::ToolPolicyBuilder;
+        let policy = ToolPolicyBuilder::new().build();
+        assert_eq!(policy.default_approval, ToolApproval::Auto);
+        assert!(policy.rules.is_empty());
+    }
+
+    #[test]
+    fn policy_builder_fluent_chain() {
+        use crate::policy::ToolPolicyBuilder;
+        let policy = ToolPolicyBuilder::new()
+            .default(ToolApproval::RequireConfirmation)
+            .allow("search")
+            .deny("dangerous")
+            .confirm("file_write")
+            .confirm_with("exec", 3)
+            .allow_with("read", 10)
+            .build();
+
+        assert_eq!(policy.default_approval, ToolApproval::RequireConfirmation);
+        assert_eq!(policy.rules.len(), 5);
+        assert_eq!(policy.approval_for(&ToolId::new("search")), ToolApproval::Auto);
+        assert_eq!(policy.approval_for(&ToolId::new("dangerous")), ToolApproval::Deny);
+        assert_eq!(policy.approval_for(&ToolId::new("file_write")), ToolApproval::RequireConfirmation);
+        assert_eq!(policy.approval_for(&ToolId::new("exec")), ToolApproval::RequireConfirmation);
+        assert_eq!(policy.approval_for(&ToolId::new("unknown")), ToolApproval::RequireConfirmation);
+
+        let exec_rule = policy.rules.iter().find(|r| r.tool_id == ToolId::new("exec")).unwrap();
+        assert_eq!(exec_rule.max_calls_per_session, Some(3));
+
+        let read_rule = policy.rules.iter().find(|r| r.tool_id == ToolId::new("read")).unwrap();
+        assert_eq!(read_rule.max_calls_per_session, Some(10));
+    }
+
+    #[test]
+    fn policy_builder_serde_roundtrip() {
+        use crate::policy::ToolPolicyBuilder;
+        let policy = ToolPolicyBuilder::new()
+            .allow("a")
+            .deny("b")
+            .build();
         let json = serde_json::to_string(&policy).unwrap();
         let back: ToolPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(back, policy);

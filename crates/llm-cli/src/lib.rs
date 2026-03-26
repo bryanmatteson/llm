@@ -10,9 +10,6 @@
 //!   terminal.
 //! - [`render::stream::render_session_events`] — renders
 //!   [`SessionEvent`](llm_session::SessionEvent)s to stderr as streaming text.
-//! - [`bootstrap::AppContext`] and [`bootstrap::build_default_context`] — quick
-//!   wiring of stores, providers, and registries for getting started.
 
 pub mod approval;
-pub mod bootstrap;
 pub mod render;
