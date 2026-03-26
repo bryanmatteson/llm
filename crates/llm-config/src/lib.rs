@@ -4,7 +4,7 @@ pub mod provider;
 pub mod session;
 pub mod tool;
 
-pub use app::AppConfig;
+pub use app::LlmConfig;
 pub use loader::ConfigLoader;
 pub use provider::{AuthMode, ProviderConfig};
 pub use session::SessionDefaults;
@@ -12,7 +12,7 @@ pub use tool::ToolPolicyConfig;
 
 #[cfg(test)]
 mod tests {
-    use crate::{AppConfig, ConfigLoader};
+    use crate::{ConfigLoader, LlmConfig};
 
     /// Canonical KDL surface for the LLM framework.
     ///
@@ -54,7 +54,7 @@ llm default-provider="openai" {
 
     #[test]
     fn parse_kdl_config() {
-        let config: AppConfig = ConfigLoader::parse(SAMPLE_KDL).expect("failed to parse KDL");
+        let config: LlmConfig = ConfigLoader::parse(SAMPLE_KDL).expect("failed to parse KDL");
 
         assert_eq!(
             config.default_provider.as_ref().map(|p| p.as_str()),
@@ -119,7 +119,10 @@ llm {
 }
 "#;
         let result = ConfigLoader::parse(kdl);
-        assert!(result.is_err(), "should reject tool-policy without allow/forbid");
+        assert!(
+            result.is_err(),
+            "should reject tool-policy without allow/forbid"
+        );
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("allow") || err.contains("forbid"),
@@ -129,7 +132,7 @@ llm {
 
     #[test]
     fn defaults_when_minimal() {
-        let config: AppConfig =
+        let config: LlmConfig =
             ConfigLoader::parse("llm {\n}").expect("failed to parse minimal KDL");
 
         assert!(config.default_provider.is_none());

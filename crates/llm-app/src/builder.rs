@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use llm_config::AppConfig;
+use llm_config::LlmConfig;
 use llm_core::Result;
 use llm_session::{DefaultSessionManager, SessionManager};
 use llm_store::{
@@ -33,7 +33,7 @@ pub struct AppBuilder {
     session_store: Option<Arc<dyn SessionStore>>,
     registrations: Vec<ProviderRegistration>,
     tools: Vec<Arc<dyn DynTool>>,
-    config: Option<AppConfig>,
+    config: Option<LlmConfig>,
 }
 
 impl AppBuilder {
@@ -104,7 +104,7 @@ impl AppBuilder {
     ///
     /// This sets session defaults and tool policies from the config file.
     /// Provider registrations and stores must still be set explicitly.
-    pub fn with_config(mut self, config: &AppConfig) -> Self {
+    pub fn with_config(mut self, config: &LlmConfig) -> Self {
         self.config = Some(config.clone());
         self
     }

@@ -16,7 +16,7 @@ use crate::tool::ToolPolicyConfig;
     skip_serialize_none,
     skip_serialize_empty_collections
 )]
-pub struct AppConfig {
+pub struct LlmConfig {
     #[kdl(attr, optional, from = "String")]
     pub default_provider: Option<ProviderId>,
     #[kdl(attr, optional)]
