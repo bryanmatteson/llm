@@ -1,0 +1,101 @@
+use serde::{Deserialize, Serialize};
+
+use crate::metadata::Metadata;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Role {
+    System,
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: Role,
+    pub content: Vec<ContentBlock>,
+    #[serde(default, skip_serializing_if = "Metadata::is_empty")]
+    pub metadata: Metadata,
+}
+
+impl Message {
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: vec![ContentBlock::Text(text.into())],
+            metadata: Metadata::new(),
+        }
+    }
+
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: vec![ContentBlock::Text(text.into())],
+            metadata: Metadata::new(),
+        }
+    }
+
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text(text.into())],
+            metadata: Metadata::new(),
+        }
+    }
+
+    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult {
+                tool_use_id: tool_use_id.into(),
+                content: content.into(),
+            }],
+            metadata: Metadata::new(),
+        }
+    }
+
+    pub fn text_content(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContentBlock {
+    Text(String),
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl TokenUsage {
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StopReason {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    Stop,
+}

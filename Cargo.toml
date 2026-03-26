@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/llm-core",
+    "crates/llm-auth",
+    "crates/llm-tools",
+    "crates/llm-questionnaire",
+    "crates/llm-config",
+    "crates/llm-store",
+    "crates/llm-provider-api",
+    "crates/llm-session",
+    "crates/llm-provider-openai",
+    "crates/llm-app",
+    "crates/llm-cli",
+    "crates/llm-gui-api",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+
+[workspace.dependencies]
+llm-core = { path = "crates/llm-core" }
+llm-auth = { path = "crates/llm-auth" }
+llm-tools = { path = "crates/llm-tools" }
+llm-questionnaire = { path = "crates/llm-questionnaire" }
+llm-config = { path = "crates/llm-config" }
+llm-store = { path = "crates/llm-store" }
+llm-provider-api = { path = "crates/llm-provider-api" }
+llm-session = { path = "crates/llm-session" }
+llm-provider-openai = { path = "crates/llm-provider-openai" }
+llm-app = { path = "crates/llm-app" }
+llm-gui-api = { path = "crates/llm-gui-api" }
+
+async-trait = "0.1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+fastrand = "2"
+getrandom = "0.3"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+toml = "0.8"
+regex-lite = "0.1"
+url = "2"
