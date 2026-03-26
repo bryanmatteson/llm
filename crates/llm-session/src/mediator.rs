@@ -102,6 +102,7 @@ fn translate_tools(
 /// * `config` - Session configuration (limits, policy, etc.).
 /// * `approval_handler` - Handler for obtaining human approval when required.
 /// * `event_tx`         - Optional channel for emitting progress events.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_turn_loop(
     session_id: &llm_core::SessionId,
     client: &dyn LlmProviderClient,
@@ -131,7 +132,14 @@ pub async fn run_turn_loop(
         let request = build_turn_request(conversation, config, &tool_descriptors_json);
 
         // 2. Call the provider.
-        let response = client.send_turn(&request).await?;
+        let response = tokio::time::timeout(
+            config.limits.turn_timeout,
+            client.send_turn(&request),
+        )
+        .await
+        .map_err(|_| FrameworkError::session(format!(
+            "turn timed out after {:?}", config.limits.turn_timeout
+        )))??;
 
         // Accumulate usage.
         aggregated_usage.input_tokens += response.usage.input_tokens;
@@ -178,7 +186,13 @@ pub async fn run_turn_loop(
 
                 for (call_id, tool_name, arguments) in calls {
                     if tool_calls_this_turn >= config.limits.max_tool_calls_per_turn {
-                        break;
+                        let err_msg = format!(
+                            "Tool call limit ({}) reached; call to '{}' was skipped.",
+                            config.limits.max_tool_calls_per_turn, tool_name
+                        );
+                        conversation.append_tool_result(&call_id, &err_msg);
+                        total_tool_calls += 1;
+                        continue;
                     }
 
                     emit(
@@ -271,13 +285,24 @@ pub async fn run_turn_loop(
 
                     // -- Execute the tool --
                     let tool_context = ToolContext {
-                        session_id: llm_core::SessionId::new("active"),
+                        session_id: session_id.clone(),
                         provider_id: config.provider_id.clone(),
                         model_id: last_model.clone(),
                         metadata: Default::default(),
                     };
 
-                    let exec_result = tool.execute(arguments.clone(), &tool_context).await;
+                    let exec_result = match tokio::time::timeout(
+                        config.limits.tool_timeout,
+                        tool.execute(arguments.clone(), &tool_context),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(FrameworkError::tool(
+                            descriptor.id.clone(),
+                            format!("execution timed out after {:?}", config.limits.tool_timeout),
+                        )),
+                    };
 
                     let (content, summary) = match exec_result {
                         Ok(value) => {
@@ -473,7 +498,9 @@ mod tests {
 
         let (tx, mut rx) = crate::event::event_channel();
 
+        let session_id = llm_core::SessionId::new("test-session");
         let outcome = run_turn_loop(
+            &session_id,
             &client,
             &mut conversation,
             &registry,

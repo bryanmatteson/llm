@@ -195,6 +195,12 @@ impl LlmProviderClient for OpenAiClient {
     }
 
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
+        if self.auth_session.tokens.is_expired() {
+            return Err(llm_core::FrameworkError::auth(
+                "access token has expired; refresh or re-authenticate before making requests",
+            ));
+        }
+
         // ── Build messages ──────────────────────────────────────────
         let mut wire_messages = Vec::new();
 
@@ -301,6 +307,12 @@ impl LlmProviderClient for OpenAiClient {
     }
 
     async fn list_models(&self) -> Result<Vec<ModelDescriptor>> {
+        if self.auth_session.tokens.is_expired() {
+            return Err(llm_core::FrameworkError::auth(
+                "access token has expired; refresh or re-authenticate before making requests",
+            ));
+        }
+
         let url = format!("{}/models", self.base_url);
 
         let resp = self

@@ -133,7 +133,7 @@ impl GuiFacade {
             metadata: Default::default(),
         };
 
-        let (handle, _rx) = self
+        let (handle, _tx, _rx) = self
             .ctx
             .sessions
             .create_session(&pid, &auth_session, config)

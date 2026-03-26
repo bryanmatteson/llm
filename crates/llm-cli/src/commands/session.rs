@@ -183,6 +183,7 @@ async fn interactive_loop(
         });
 
         let outcome = run_turn_loop(
+            &handle.id,
             &client,
             &mut handle.conversation,
             &ctx.tool_registry,

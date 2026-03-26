@@ -3,7 +3,7 @@ use std::sync::Arc;
 use llm_auth::AuthSession;
 use llm_core::{FrameworkError, Message, ProviderId, Result, SessionId};
 use llm_session::{
-    AutoApproveHandler, EventReceiver, SessionConfig, SessionHandle, SessionManager,
+    AutoApproveHandler, EventReceiver, EventSender, SessionConfig, SessionHandle, SessionManager,
     TurnOutcome, event_channel, run_turn_loop,
 };
 use llm_tools::ToolRegistry;
@@ -33,14 +33,15 @@ impl SessionService {
 
     /// Create a new conversation session.
     ///
-    /// Returns a [`SessionHandle`] and an [`EventReceiver`] for observing
-    /// session progress.
+    /// Returns a [`SessionHandle`], an [`EventSender`] that the caller must
+    /// keep alive for the duration of the session, and an [`EventReceiver`]
+    /// for observing session progress.
     pub async fn create_session(
         &self,
         provider_id: &ProviderId,
         auth: &AuthSession,
         config: SessionConfig,
-    ) -> Result<(SessionHandle, EventReceiver)> {
+    ) -> Result<(SessionHandle, EventSender, EventReceiver)> {
         // Verify the provider exists and create a client to prove the auth is
         // valid. We hold the client in the handle conceptually, but since
         // `SessionHandle` does not store a client we just validate here.
@@ -63,9 +64,9 @@ impl SessionService {
             .await?;
 
         let handle = self.session_manager.create_session(config).await?;
-        let (_tx, rx) = event_channel();
+        let (tx, rx) = event_channel();
 
-        Ok((handle, rx))
+        Ok((handle, tx, rx))
     }
 
     /// Send a user message to an existing session and run the turn loop to
@@ -116,6 +117,7 @@ impl SessionService {
         let approval_handler = AutoApproveHandler;
 
         let outcome = run_turn_loop(
+            session_id,
             client.as_ref(),
             &mut handle.conversation,
             &self.tool_registry,

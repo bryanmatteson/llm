@@ -45,7 +45,7 @@ pub struct AuthSession {
 ///
 /// The auth crate never performs terminal I/O; it returns one of these
 /// variants and the presentation layer decides how to present it.
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuthStart {
     /// The user must open `url` in a browser. The auth layer is
     /// listening for the callback on `redirect_uri`.
@@ -71,7 +71,7 @@ pub enum AuthStart {
 // ── AuthCompletion ───────────────────────────────────────────────────
 
 /// The result of successfully completing a login flow.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthCompletion {
     pub session: AuthSession,
 }

@@ -8,12 +8,14 @@ use llm_session::{EventReceiver, SessionEvent};
 /// closed).
 pub async fn render_session_events(rx: &mut EventReceiver) {
     let stderr = io::stderr();
+    let mut received_deltas = false;
 
     while let Some(event) = rx.recv().await {
         let mut err = stderr.lock();
 
         match event {
             SessionEvent::AssistantDelta { text } => {
+                received_deltas = true;
                 // Print streaming text inline without a newline so deltas
                 // appear as a continuous stream.
                 write!(err, "{text}").ok();
@@ -50,15 +52,13 @@ pub async fn render_session_events(rx: &mut EventReceiver) {
                 model,
                 usage,
             } => {
-                // If there were streaming deltas, `text` duplicates what was
-                // already printed. If the provider did *not* stream, print
-                // the final response here.
-                //
-                // For now we always print, which may double-print in
-                // streaming scenarios.  A production build would track
-                // whether deltas were received.
+                // If streaming deltas were received, `text` duplicates what
+                // was already printed.  Only print it when no deltas arrived.
+                if !received_deltas {
+                    writeln!(err).ok();
+                    writeln!(err, "{text}").ok();
+                }
                 writeln!(err).ok();
-                writeln!(err, "{text}").ok();
                 writeln!(
                     err,
                     "  [model={model} tokens_in={} tokens_out={}]",

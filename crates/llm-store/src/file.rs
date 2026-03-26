@@ -4,7 +4,7 @@
 //! directory.  The directory is created on first write if it does not already
 //! exist.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use llm_auth::AuthSession;
 use llm_core::{FrameworkError, ProviderId, Result, SessionId};
@@ -23,13 +23,13 @@ fn safe_filename(id: &str) -> String {
         .collect()
 }
 
-fn ensure_dir(dir: &PathBuf) -> Result<()> {
+fn ensure_dir(dir: &Path) -> Result<()> {
     std::fs::create_dir_all(dir).map_err(|e| {
         FrameworkError::storage(format!("failed to create directory {}: {e}", dir.display()))
     })
 }
 
-fn write_json<T: serde::Serialize>(path: &PathBuf, value: &T) -> Result<()> {
+fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|e| FrameworkError::storage(format!("serialization error: {e}")))?;
     std::fs::write(path, json).map_err(|e| {
@@ -37,7 +37,7 @@ fn write_json<T: serde::Serialize>(path: &PathBuf, value: &T) -> Result<()> {
     })
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<Option<T>> {
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match std::fs::read_to_string(path) {
         Ok(contents) => {
             let value = serde_json::from_str(&contents).map_err(|e| {
@@ -56,7 +56,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<Option<T>
     }
 }
 
-fn remove_file(path: &PathBuf) -> Result<()> {
+fn remove_file(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -68,7 +68,7 @@ fn remove_file(path: &PathBuf) -> Result<()> {
 }
 
 /// List JSON file stems in `dir`, returning only those with the `.json` extension.
-fn list_json_stems(dir: &PathBuf) -> Result<Vec<String>> {
+fn list_json_stems(dir: &Path) -> Result<Vec<String>> {
     match std::fs::read_dir(dir) {
         Ok(entries) => {
             let mut stems = Vec::new();

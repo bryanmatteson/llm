@@ -29,9 +29,15 @@ impl ToolService {
     /// [`AppBuilder`](crate::builder::AppBuilder)) before the registry is
     /// shared. This method exists as a convenience for late-registered tools
     /// in tests or plugin scenarios.
-    pub fn register_tool(&mut self, tool: Arc<dyn Tool>) {
-        if let Some(registry) = Arc::get_mut(&mut self.tool_registry) {
-            registry.register(tool);
+    pub fn register_tool(&mut self, tool: Arc<dyn Tool>) -> llm_core::Result<()> {
+        match Arc::get_mut(&mut self.tool_registry) {
+            Some(registry) => {
+                registry.register(tool);
+                Ok(())
+            }
+            None => Err(llm_core::FrameworkError::config(
+                "cannot register tool: registry is shared and immutable after build",
+            )),
         }
     }
 
