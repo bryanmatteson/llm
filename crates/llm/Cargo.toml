@@ -1,0 +1,39 @@
+[package]
+name = "llm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Unified facade for the LLM framework — auth, sessions, tools, questionnaires, and providers"
+
+[features]
+default = ["openai", "anthropic", "google", "cli", "gui"]
+
+# Providers
+openai    = ["dep:llm-provider-openai"]
+anthropic = ["dep:llm-provider-anthropic"]
+google    = ["dep:llm-provider-google"]
+
+# Frontend adapters
+cli = ["dep:llm-cli"]
+gui = ["dep:llm-gui-api"]
+
+[dependencies]
+# Always included — these are the core framework
+llm-core          = { workspace = true }
+llm-auth          = { workspace = true }
+llm-tools         = { workspace = true }
+llm-questionnaire = { workspace = true }
+llm-config        = { workspace = true }
+llm-store         = { workspace = true }
+llm-provider-api  = { workspace = true }
+llm-session       = { workspace = true }
+llm-app           = { workspace = true }
+
+# Optional providers
+llm-provider-openai     = { workspace = true, optional = true }
+llm-provider-anthropic  = { workspace = true, optional = true }
+llm-provider-google     = { workspace = true, optional = true }
+
+# Optional frontend adapters
+llm-cli     = { workspace = true, optional = true }
+llm-gui-api = { workspace = true, optional = true }

@@ -815,6 +815,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
+name = "llm"
+version = "0.1.0"
+dependencies = [
+ "llm-app",
+ "llm-auth",
+ "llm-cli",
+ "llm-config",
+ "llm-core",
+ "llm-gui-api",
+ "llm-provider-anthropic",
+ "llm-provider-api",
+ "llm-provider-google",
+ "llm-provider-openai",
+ "llm-questionnaire",
+ "llm-session",
+ "llm-store",
+ "llm-tools",
+]
+
+[[package]]
 name = "llm-app"
 version = "0.1.0"
 dependencies = [

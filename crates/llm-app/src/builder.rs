@@ -1,11 +1,12 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use llm_config::AppConfig;
 use llm_core::Result;
 use llm_session::{DefaultSessionManager, SessionManager};
 use llm_store::{
-    AccountStore, CredentialStore, InMemoryAccountStore, InMemoryCredentialStore,
-    InMemorySessionStore, SessionStore,
+    AccountStore, CredentialStore, FileAccountStore, FileCredentialStore, FileSessionStore,
+    InMemoryAccountStore, InMemoryCredentialStore, InMemorySessionStore, SessionStore,
 };
 use llm_tools::{DynTool, ToolApproval, ToolPolicyBuilder, ToolRegistry};
 
@@ -46,6 +47,21 @@ impl AppBuilder {
             tools: Vec::new(),
             config: None,
         }
+    }
+
+    /// Use file-backed stores rooted at `dir`.
+    ///
+    /// Creates subdirectories under `dir` for credentials, accounts, and
+    /// sessions.  Directories are created lazily on first write.
+    ///
+    /// This is a convenience that sets all three stores at once.  You can
+    /// still override individual stores afterward with
+    /// [`with_credential_store`](Self::with_credential_store), etc.
+    pub fn with_data_dir(self, dir: impl AsRef<Path>) -> Self {
+        let dir = dir.as_ref();
+        self.with_credential_store(Arc::new(FileCredentialStore::new(dir.join("credentials"))))
+            .with_account_store(Arc::new(FileAccountStore::new(dir.join("accounts"))))
+            .with_session_store(Arc::new(FileSessionStore::new(dir.join("sessions"))))
     }
 
     /// Supply a custom credential store.

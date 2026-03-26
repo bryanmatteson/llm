@@ -15,6 +15,7 @@ members = [
     "crates/llm-app",
     "crates/llm-cli",
     "crates/llm-gui-api",
+    "crates/llm",
 ]
 
 [workspace.package]
@@ -34,7 +35,9 @@ llm-provider-openai = { path = "crates/llm-provider-openai" }
 llm-provider-anthropic = { path = "crates/llm-provider-anthropic" }
 llm-provider-google = { path = "crates/llm-provider-google" }
 llm-app = { path = "crates/llm-app" }
+llm-cli = { path = "crates/llm-cli" }
 llm-gui-api = { path = "crates/llm-gui-api" }
+llm = { path = "crates/llm" }
 
 async-trait = "0.1"
 base64 = "0.22"

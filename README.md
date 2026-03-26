@@ -1,65 +1,89 @@
-# llm-framework
+# llm
 
 Modular Rust toolkit for building LLM-powered applications.
 
-Each crate stands alone. Pull in authentication without sessions, questionnaires without providers, or tool calling without a GUI. Compose them when you need the full stack.
+One dependency gets you everything. Or pull in just what you need — authentication without sessions, questionnaires without providers, tool calling without a GUI. Compose them when you need the full stack.
 
-## Features
+## Install
 
-- **Typed tool system** -- define tools as Rust structs, get JSON Schema generation and validation for free
-- **Provider-agnostic sessions** -- turn loop with automatic tool dispatch, approval gating, and timeouts
-- **OAuth 2.0 + PKCE and API key auth** -- UI-agnostic auth flows that work in terminals, GUIs, or headless environments
-- **Data-driven questionnaires** -- conditional branching, validation rules, pull-based engine with zero framework dependencies
-- **Pluggable storage** -- in-memory and file-backed stores for credentials, sessions, and accounts
-- **CLI and GUI facades** -- terminal renderers and DTO-oriented async API, both built on the same core
+```toml
+# Everything (all providers, CLI + GUI adapters)
+[dependencies]
+llm = { git = "https://github.com/bryanmatteson/llm.git" }
 
-## Architecture
+# Just OpenAI + CLI
+llm = { git = "...", default-features = false, features = ["openai", "cli"] }
 
+# Just core (no providers, no frontends)
+llm = { git = "...", default-features = false }
 ```
-                       llm-core
-               (IDs, errors, messages)
-                         |
-       +---------+-------+--------+-----------------+
-       |         |                |                  |
-   llm-auth  llm-tools     llm-store        llm-provider-api
-       |         |            |                      |
-       |         |            |                      |
-       +---------+-----+------+                      |
-                       |                             |
-                   llm-session -----------------------+
-                       |
-              +--------+--------+
-              |                 |
-   llm-provider-openai      llm-app
-   llm-provider-anthropic   /      \
-                     llm-cli     llm-gui-api
 
-   llm-questionnaire (standalone, no framework deps)
-   llm-config (TOML-based configuration)
+Or depend on individual crates directly:
+
+```toml
+llm-core          = { git = "https://github.com/bryanmatteson/llm.git" }
+llm-auth          = { git = "https://github.com/bryanmatteson/llm.git" }
+llm-tools         = { git = "https://github.com/bryanmatteson/llm.git" }
+llm-questionnaire = { git = "https://github.com/bryanmatteson/llm.git" }
 ```
+
+### Features
+
+| Feature | Default | What it adds |
+|---|---|---|
+| `openai` | yes | `llm::openai` — OpenAI / GPT provider |
+| `anthropic` | yes | `llm::anthropic` — Anthropic / Claude provider |
+| `google` | yes | `llm::google` — Google / Gemini provider |
+| `cli` | yes | `llm::cli` — terminal questionnaire renderer, stream renderer, approval handler |
+| `gui` | yes | `llm::gui` — DTO facade for GUI frontends (Tauri, egui, web) |
 
 ## Quick Start
 
 ```rust,ignore
-use std::sync::Arc;
-use llm_app::AppBuilder;
-use llm_session::SessionBuilder;
+use llm::{AppBuilder, SessionConfig, SessionBuilder, TurnOutcome, Message};
+use llm::openai::{openai_registration};
 
-// Wire up the application
 let ctx = AppBuilder::new()
-    .register_provider(openai_registration)
+    .with_data_dir("~/.config/my-app")      // persist auth + sessions to disk
+    .register_provider(openai_registration())
     .register_tool(Arc::new(my_tool))
     .build()?;
 
-// Create a session
 let config = SessionBuilder::new("openai")
     .model("gpt-4o")
     .system_prompt("You are a helpful assistant.")
     .build();
 
-let (handle, tx, mut rx) = ctx.sessions
+let (handle, tx, rx) = ctx.sessions
     .create_session(&provider_id, &auth_session, config)
     .await?;
+```
+
+## Architecture
+
+```
+                       llm-core
+              (IDs, errors, messages,
+            SessionConfig, ToolPolicy,
+                 SessionLimits)
+                         |
+       +---------+-------+--------+-----------+
+       |         |                |            |
+   llm-auth  llm-tools     llm-store   llm-provider-api
+       |         |            |               |
+       +---------+-----+------+               |
+                       |                      |
+                   llm-session ---------------+
+                       |
+              +--------+--------+
+              |                 |
+   llm-provider-openai      llm-app
+   llm-provider-anthropic   /      \
+   llm-provider-google  llm-cli  llm-gui-api
+                            \      /
+                             llm        <-- facade crate
+   llm-questionnaire (standalone)
+   llm-config (TOML configuration)
 ```
 
 ---
@@ -73,10 +97,9 @@ The auth layer never touches the terminal or browser. It returns a descriptor te
 ### API Key Auth
 
 ```rust,ignore
-use llm_auth::{AuthProvider, AuthStart, AuthSession, TokenPair};
-use llm_core::Metadata;
+use llm::auth::{AuthProvider, AuthStart};
+use llm::Metadata;
 
-// start_login() tells the UI what to do
 let start = provider.start_login().await?;
 
 match start {
@@ -86,22 +109,19 @@ match start {
     _ => {}
 }
 
-// Pass the key back through complete_login
 let mut params = Metadata::new();
 params.insert("api_key".into(), "sk-my-key".into());
 let completion = provider.complete_login(&params).await?;
-let session: AuthSession = completion.session;
+let session = completion.session;
 
-// The session holds a TokenPair with expiration tracking
 assert!(!session.tokens.is_expired());
-assert!(session.tokens.needs_refresh(chrono::Duration::minutes(5)));
 ```
 
 ### OAuth Browser Flow
 
 ```rust,ignore
-use llm_auth::{AuthProvider, AuthStart};
-use llm_core::Metadata;
+use llm::auth::{AuthProvider, AuthStart};
+use llm::Metadata;
 
 let start = provider.start_login().await?;
 
@@ -110,16 +130,12 @@ match start {
         // Open url in user's browser, listen for callback on redirect_uri
         println!("Open: {url}");
 
-        // After callback, pass the code and state back
         let mut params = Metadata::new();
         params.insert("code".into(), authorization_code);
         params.insert("state".into(), state);
         let completion = provider.complete_login(&params).await?;
 
-        // TokenPair has access_token, optional refresh_token, and expires_at
-        let tokens: &TokenPair = &completion.session.tokens;
-        if tokens.can_refresh() {
-            // Refresh proactively before expiry
+        if completion.session.tokens.can_refresh() {
             let refreshed = provider.refresh(&completion.session).await?;
         }
     }
@@ -127,16 +143,18 @@ match start {
 }
 ```
 
-### Token Persistence via `llm-store`
+### Persistence
 
 ```rust,ignore
-use llm_store::{CredentialStore, FileCredentialStore, InMemoryCredentialStore};
+use llm::store::{FileCredentialStore, InMemoryCredentialStore};
 
-// In-memory for tests
-let store = InMemoryCredentialStore::new();
+let store = InMemoryCredentialStore::new();           // tests
+let store = FileCredentialStore::new("/path/to/dir"); // production
 
-// File-backed for production
-let store = FileCredentialStore::new("/path/to/credentials");
+// Or let AppBuilder handle it:
+let ctx = AppBuilder::new()
+    .with_data_dir("~/.config/my-app")  // credentials, accounts, sessions
+    .build()?;
 ```
 
 ---
@@ -145,11 +163,10 @@ let store = FileCredentialStore::new("/path/to/credentials");
 
 **Crates:** `llm-session`, `llm-store`
 
-### Build a Session with `SessionBuilder`
+### Build a Session
 
 ```rust,ignore
-use llm_session::{SessionBuilder, SessionConfig};
-use llm_tools::ToolApproval;
+use llm::{SessionBuilder, SessionConfig, ToolApproval};
 
 let config: SessionConfig = SessionBuilder::new("openai")
     .model("gpt-4o")
@@ -162,70 +179,85 @@ let config: SessionConfig = SessionBuilder::new("openai")
     .deny_tool("exec_shell")
     .confirm_tool("delete_file")
     .confirm_tool_with_limit("web_search", 10)
-    .meta("user", "alice")
     .build();
+
+// Or the minimal version:
+let config = SessionConfig::for_provider("openai");
 ```
 
 ### Create and Manage Sessions
 
 ```rust,ignore
-use std::sync::Arc;
-use llm_session::{DefaultSessionManager, SessionManager, SessionHandle};
-use llm_store::InMemorySessionStore;
+use llm::session::{DefaultSessionManager, SessionManager};
+use llm::store::InMemorySessionStore;
 
 let store = Arc::new(InMemorySessionStore::new());
 let manager = DefaultSessionManager::new(store);
 
-// Create a session -- generates a random UUID and persists to the store
-let handle: SessionHandle = manager.create_session(config).await?;
-println!("Session: {}", handle.id.as_str());
+let handle = manager.create_session(config).await?;
 
-// Reload later
+// Reload later -- full config (tool policy, limits, system prompt) is restored
 let restored = manager.get_session(&handle.id).await?;
 
-// List all sessions
 let ids = manager.list_sessions().await?;
 ```
 
 ### Run the Turn Loop
 
 ```rust,ignore
-use llm_session::{run_turn_loop, event_channel, AutoApproveHandler, TurnOutcome};
+use llm::session::{run_turn_loop, event_channel, AutoApproveHandler, TurnLoopContext};
 
 let (tx, mut rx) = event_channel();
 handle.conversation.append_user("What is the weather in NYC?");
 
-let outcome: TurnOutcome = run_turn_loop(
-    &handle.id,
-    &client,            // impl LlmProviderClient
-    &mut handle.conversation,
-    &tool_registry,
-    &tool_adapter,      // impl ToolSchemaAdapter
-    &handle.config,
-    &AutoApproveHandler,
-    Some(&tx),
-).await?;
+let outcome = run_turn_loop(TurnLoopContext {
+    session_id: &handle.id,
+    client: client.as_ref(),
+    conversation: &mut handle.conversation,
+    tool_registry: &tool_registry,
+    tool_adapter: tool_adapter.as_ref(),
+    config: &handle.config,
+    approval_handler: &AutoApproveHandler,
+    event_tx: Some(&tx),
+}).await?;
 
 println!("{}", outcome.final_text);
-println!("turns={} tool_calls={}", outcome.turns_used, outcome.tool_calls_made);
-println!("tokens: in={} out={}", outcome.usage.input_tokens, outcome.usage.output_tokens);
+println!("turns={} tools={} tokens={}",
+    outcome.turns_used, outcome.tool_calls_made, outcome.usage.total());
+```
+
+### Streaming
+
+```rust,ignore
+use llm::session::run_streaming_turn_loop;
+
+// Same TurnLoopContext -- emits AssistantDelta events for each text chunk.
+// Falls back to send_turn automatically if the provider doesn't support streaming.
+let outcome = run_streaming_turn_loop(TurnLoopContext {
+    session_id: &handle.id,
+    client: client.as_ref(),
+    conversation: &mut handle.conversation,
+    tool_registry: &tool_registry,
+    tool_adapter: tool_adapter.as_ref(),
+    config: &handle.config,
+    approval_handler: &AutoApproveHandler,
+    event_tx: Some(&tx),
+}).await?;
 ```
 
 ---
 
-## Story 3: Streaming Chat with Tool Calls
+## Story 3: Typed Tool Calls
 
 **Crate:** `llm-tools` (+ `llm-session` for the turn loop)
 
 ### Define a Tool
 
-Input derives `Deserialize` and `JsonSchema` (doc comments become the description the model sees). Output derives `Serialize`.
+Doc comments on input fields become the description the model sees. JSON Schema is generated automatically.
 
 ```rust,ignore
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use llm_tools::{Tool, ToolInfo, ToolContext, JsonSchema};
-use llm_core::Result;
+use llm::tools::{Tool, ToolInfo, ToolContext, JsonSchema};
+use llm::Result;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct WeatherInput {
@@ -254,57 +286,32 @@ impl Tool for WeatherTool {
     }
 
     async fn execute(&self, input: WeatherInput, _ctx: &ToolContext) -> Result<WeatherOutput> {
-        Ok(WeatherOutput {
-            temperature: 22.0,
-            unit: "celsius".into(),
-        })
+        Ok(WeatherOutput { temperature: 22.0, unit: "celsius".into() })
     }
 }
 ```
 
-### Register Tools
+### Register and Configure
 
 ```rust,ignore
-use std::sync::Arc;
-use llm_tools::{ToolRegistry, DynTool};
+use llm::{ToolRegistry, DynTool, ToolPolicyBuilder, ToolApproval};
 
 let mut registry = ToolRegistry::new();
 registry.register(Arc::new(WeatherTool) as Arc<dyn DynTool>);
 
-// Lookup by ID or wire name
-let tool = registry.get_by_wire_name("get_weather");
-
-// Get all descriptors (sorted, includes JSON Schema)
-let descriptors = registry.all_descriptors();
-```
-
-### Configure Tool Policy
-
-```rust,ignore
-use llm_tools::{ToolPolicyBuilder, ToolApproval};
-
 let policy = ToolPolicyBuilder::new()
     .default(ToolApproval::RequireConfirmation)
     .allow("weather")
-    .allow("search")
     .deny("dangerous_tool")
     .confirm_with("web_search", 10)
     .build();
-
-assert!(policy.is_allowed(&llm_core::ToolId::new("weather")));
-assert!(!policy.is_allowed(&llm_core::ToolId::new("dangerous_tool")));
 ```
 
-### Observe Tool Calls via Events
-
-The mediator emits `SessionEvent`s as tools are called and completed:
+### Observe Tool Calls
 
 ```rust,ignore
-use llm_session::{event_channel, SessionEvent};
+use llm::SessionEvent;
 
-let (tx, mut rx) = event_channel();
-
-// In a separate task:
 while let Some(event) = rx.recv().await {
     match event {
         SessionEvent::ToolCallRequested { tool_name, arguments, .. } => {
@@ -313,18 +320,9 @@ while let Some(event) = rx.recv().await {
         SessionEvent::ToolCallCompleted { tool_name, summary, .. } => {
             eprintln!("[{tool_name} -> {summary}]");
         }
-        SessionEvent::ToolApprovalRequired { tool_name, .. } => {
-            eprintln!("[{tool_name} needs approval]");
-        }
-        SessionEvent::TurnCompleted { text, model, usage } => {
+        SessionEvent::TurnCompleted { text, usage, .. } => {
             println!("{text}");
-            eprintln!("[model={model} tokens={}]", usage.total());
-        }
-        SessionEvent::TurnLimitReached { turns_used } => {
-            eprintln!("[limit reached after {turns_used} turns]");
-        }
-        SessionEvent::Error { message } => {
-            eprintln!("[error: {message}]");
+            eprintln!("[tokens: {}]", usage.total());
         }
         _ => {}
     }
@@ -340,7 +338,7 @@ while let Some(event) = rx.recv().await {
 ### Build a Questionnaire
 
 ```rust,ignore
-use llm_questionnaire::{QuestionnaireBuilder, QuestionnaireRun, AnswerMap, AnswerValue};
+use llm::questionnaire::{QuestionnaireBuilder, QuestionnaireRun, AnswerValue};
 
 let questionnaire = QuestionnaireBuilder::new("setup", "Provider Setup")
     .description("Configure your LLM provider")
@@ -354,9 +352,7 @@ let questionnaire = QuestionnaireBuilder::new("setup", "Provider Setup")
             .required()
     })
     .yes_no_with("enable_tools", "Enable tool calling?", |q| q.default_yes())
-    .number_with("max_turns", "Max conversation turns?", |q| {
-        q.range(1.0, 100.0).default_number(10.0)
-    })
+    .number_with("max_turns", "Max turns?", |q| q.range(1.0, 100.0).default_number(10.0))
     .multi_select("features", "Select features:", &["streaming", "logging", "cache"])
     .text("notes", "Anything else?")
     .build();
@@ -364,44 +360,23 @@ let questionnaire = QuestionnaireBuilder::new("setup", "Provider Setup")
 
 ### Run the Engine
 
-The engine is UI-agnostic. You pull the next question and push answers. Conditions are evaluated automatically -- questions whose conditions are not met are skipped.
+The engine is UI-agnostic. Pull the next question, push an answer. Conditions are evaluated automatically.
 
 ```rust,ignore
 let mut run = QuestionnaireRun::new(questionnaire).unwrap();
 
 while let Some(question) = run.next_question() {
-    println!("{}", question.label);
-
-    if let Some(help) = &question.help_text {
-        println!("  ({help})");
-    }
-
-    // Your UI collects an answer
     let answer = collect_answer_from_ui(question);
-
     match run.submit_answer(answer) {
-        Ok(()) => {}                            // advanced to next question
-        Err(errors) => {
-            for e in &errors { eprintln!("  {e}"); }
-            // question is NOT advanced -- re-ask
-        }
+        Ok(()) => {}
+        Err(errors) => { /* validation failed -- re-ask */ }
     }
 }
 
-assert!(run.is_complete());
-```
-
-### Read Typed Answers
-
-```rust,ignore
-use llm_questionnaire::QuestionId;
-
-let answers: &AnswerMap = run.answers();
-
-let provider: Option<&str>  = answers.choice(&QuestionId::new("provider"));
-let api_key: Option<&str>   = answers.text(&QuestionId::new("api_key"));
-let tools: Option<bool>     = answers.yes_no(&QuestionId::new("enable_tools"));
-let turns: Option<f64>      = answers.number(&QuestionId::new("max_turns"));
+let answers = run.answers();
+let provider: Option<&str> = answers.choice(&QuestionId::new("provider"));
+let api_key: Option<&str>  = answers.text(&QuestionId::new("api_key"));
+let tools: Option<bool>    = answers.yes_no(&QuestionId::new("enable_tools"));
 ```
 
 ---
@@ -412,38 +387,19 @@ let turns: Option<f64>      = answers.number(&QuestionId::new("max_turns"));
 
 Three reusable building blocks for terminal applications.
 
-### Run a Questionnaire in the Terminal
-
 ```rust,ignore
-use llm_cli::render::questionnaire::run_terminal_questionnaire;
+use llm::cli::render::questionnaire::run_terminal_questionnaire;
+use llm::cli::render::stream::render_session_events;
+use llm::cli::approval::CliApprovalHandler;
 
+// Run a questionnaire interactively in the terminal
 let answers = run_terminal_questionnaire(&questionnaire)?;
-// Renders choices, yes/no prompts, text inputs, and number inputs
-// to stderr with defaults, validation, and retry on error.
-```
 
-### Render Streaming Session Events
-
-```rust,ignore
-use llm_cli::render::stream::render_session_events;
-use llm_session::EventReceiver;
-
-let mut rx: EventReceiver = event_receiver;
+// Render streaming session events (deltas, tool calls, completion)
 render_session_events(&mut rx).await;
-// Prints streaming deltas inline, tool calls as [calling tool_name],
-// results as [tool result: summary], and usage stats on completion.
-```
 
-### Terminal Tool Approval
-
-```rust,ignore
-use llm_cli::approval::CliApprovalHandler;
-use llm_session::ApprovalHandler;
-
+// Prompt "Allow? [Y/n]" for tool calls requiring confirmation
 let handler = CliApprovalHandler;
-// When a tool call requires confirmation, prints the tool name and
-// arguments to stderr and prompts "Allow? [Y/n]" on stdin.
-// Pass it as the ApprovalHandler to run_turn_loop.
 ```
 
 ---
@@ -452,56 +408,17 @@ let handler = CliApprovalHandler;
 
 **Crate:** `llm-gui-api`
 
-A DTO-oriented facade for GUI frontends (Tauri, egui, web). Every method returns lightweight, serializable types -- the GUI never depends on internal framework types.
-
-### The Facade
+A DTO-oriented facade for GUI frontends. Every method returns lightweight, serializable types.
 
 ```rust,ignore
-use std::sync::Arc;
-use llm_gui_api::{GuiFacade, ProviderDto, SessionDto, ToolDto, EventDto, AuthStatusDto};
-use llm_app::AppContext;
+use llm::gui::{GuiFacade, ProviderDto, SessionDto, EventDto};
 
 let facade = GuiFacade::new(Arc::new(app_context));
 
-// Providers dropdown
 let providers: Vec<ProviderDto> = facade.list_providers().await?;
-// ProviderDto { id, display_name, capabilities }
-
-// Auth status badge
-let status: AuthStatusDto = facade.auth_status("openai").await?;
-// AuthStatusDto { provider_id, authenticated, method }
-
-// Begin OAuth -- returns JSON the frontend can interpret
-let auth_start: serde_json::Value = facade.start_login("openai").await?;
-
-// Complete login
-let status = facade.complete_login("openai", params_json).await?;
-
-// Session management
+let status = facade.auth_status("openai").await?;
 let session: SessionDto = facade.create_session("openai", Some("gpt-4o")).await?;
-// SessionDto { id, provider_id, model, message_count }
-
-// Send a message
 let event: EventDto = facade.send_message(&session.id, "Hello!").await?;
-// EventDto { kind: "turn_completed", data: { "text": "...", ... } }
-
-// Tools panel
-let tools: Vec<ToolDto> = facade.list_tools().await?;
-// ToolDto { id, display_name, description }
-```
-
-### Event Adapter
-
-The `SessionEventAdapter` converts session events into flat `{ kind, data }` DTOs for any transport:
-
-```rust,ignore
-use llm_gui_api::SessionEventAdapter;
-use llm_gui_api::EventDto;
-
-let event_json = serde_json::to_value(&session_event)?;
-let dto: EventDto = SessionEventAdapter::adapt_event(&event_json);
-// dto.kind = "tool_call_requested"
-// dto.data = { "call_id": "...", "tool_name": "...", "arguments": {...} }
 ```
 
 ---
@@ -510,56 +427,36 @@ let dto: EventDto = SessionEventAdapter::adapt_event(&event_json);
 
 | Crate | Purpose | Key Types |
 |---|---|---|
-| `llm-core` | Shared IDs, errors, message types | `ProviderId`, `SessionId`, `ToolId`, `Message`, `ContentBlock`, `TokenUsage`, `StopReason`, `FrameworkError` |
-| `llm-auth` | Provider authentication | `AuthProvider`, `AuthStart`, `AuthSession`, `AuthMethod`, `TokenPair`, `OAuthEndpoints`, `PkceChallenge` |
-| `llm-tools` | Typed tool system | `Tool`, `ToolInfo`, `DynTool`, `ToolRegistry`, `ToolPolicy`, `ToolPolicyBuilder`, `ToolApproval`, `ToolContext`, `JsonSchema` |
-| `llm-questionnaire` | Data-driven questionnaires | `QuestionnaireBuilder`, `QuestionnaireRun`, `AnswerMap`, `AnswerValue`, `QuestionConfig`, `ConditionExpr` |
-| `llm-config` | TOML configuration loading | `AppConfig`, `ProviderConfig`, `SessionDefaults` |
-| `llm-store` | Pluggable persistence | `CredentialStore`, `SessionStore`, `AccountStore`, `InMemorySessionStore`, `FileSessionStore` |
+| `llm` | **Facade** — single dependency, feature-gated re-exports | Everything below |
+| `llm-core` | Shared IDs, errors, messages, config, policy | `ProviderId`, `SessionId`, `ToolId`, `Message`, `SessionConfig`, `ToolPolicy`, `SessionLimits`, `FrameworkError` |
+| `llm-auth` | Provider authentication | `AuthProvider`, `AuthStart`, `AuthSession`, `TokenPair`, `PkceChallenge` |
+| `llm-tools` | Typed tool system | `Tool`, `ToolInfo`, `DynTool`, `ToolRegistry`, `ToolPolicyBuilder`, `ToolApproval` |
+| `llm-questionnaire` | Data-driven questionnaires | `QuestionnaireBuilder`, `QuestionnaireRun`, `AnswerMap`, `AnswerValue`, `ConditionExpr` |
+| `llm-config` | TOML configuration | `AppConfig`, `ProviderConfig`, `SessionDefaults`, `ConfigLoader` |
+| `llm-store` | Pluggable persistence | `CredentialStore`, `SessionStore`, `AccountStore`, `FileCredentialStore`, `InMemorySessionStore` |
 | `llm-provider-api` | Provider client trait | `LlmProviderClient`, `TurnRequest`, `TurnResponse`, `ProviderEvent`, `ToolSchemaAdapter` |
-| `llm-session` | Turn-loop orchestration | `SessionBuilder`, `SessionConfig`, `SessionHandle`, `SessionManager`, `run_turn_loop`, `run_streaming_turn_loop`, `TurnOutcome`, `SessionEvent`, `ApprovalHandler` |
+| `llm-session` | Turn-loop orchestration | `SessionBuilder`, `TurnLoopContext`, `run_turn_loop`, `run_streaming_turn_loop`, `TurnOutcome`, `SessionEvent` |
 | `llm-provider-openai` | OpenAI provider | `OpenAiClient`, `OpenAiAuthProvider`, `OpenAiToolFormat` |
 | `llm-provider-anthropic` | Anthropic/Claude provider | `AnthropicClient`, `AnthropicAuthProvider`, `AnthropicToolFormat` |
 | `llm-provider-google` | Google/Gemini provider | `GoogleClient`, `GoogleAuthProvider`, `GoogleToolFormat` |
-| `llm-app` | Application wiring | `AppBuilder`, `AppContext`, `ProviderRegistration`, `ProviderClientFactory`, `AuthService`, `SessionService` |
+| `llm-app` | Application wiring | `AppBuilder`, `AppContext`, `ProviderRegistration`, `AuthService`, `SessionService` |
 | `llm-cli` | Terminal utilities | `CliApprovalHandler`, `run_terminal_questionnaire`, `render_session_events` |
-| `llm-gui-api` | GUI facade + DTOs | `GuiFacade`, `ProviderDto`, `SessionDto`, `ToolDto`, `EventDto`, `SessionEventAdapter` |
+| `llm-gui-api` | GUI facade + DTOs | `GuiFacade`, `ProviderDto`, `SessionDto`, `EventDto`, `SessionEventAdapter` |
 
 ## Adding a New Provider
 
 Implement three traits and bundle them into a `ProviderRegistration`:
 
 ```rust,ignore
-use llm_auth::AuthProvider;
-use llm_provider_api::{LlmProviderClient, ToolSchemaAdapter};
-use llm_app::{ProviderClientFactory, ProviderRegistration};
+use llm::auth::AuthProvider;
+use llm::provider_api::{LlmProviderClient, ToolSchemaAdapter};
+use llm::app::{ProviderClientFactory, ProviderRegistration};
 
 // 1. AuthProvider -- discover, start_login, complete_login, refresh, validate, logout
-struct MyAuthProvider { /* ... */ }
-impl AuthProvider for MyAuthProvider { /* ... */ }
-
 // 2. LlmProviderClient -- send_turn, stream_turn, list_models
-struct MyClient { /* ... */ }
-impl LlmProviderClient for MyClient { /* ... */ }
-
-// 3. ProviderClientFactory -- creates a client from an AuthSession + ModelId
-struct MyFactory;
-#[async_trait]
-impl ProviderClientFactory for MyFactory {
-    async fn create_client(
-        &self,
-        auth: &AuthSession,
-        model: &ModelId,
-    ) -> Result<Box<dyn LlmProviderClient>> {
-        Ok(Box::new(MyClient::new(auth, model)))
-    }
-}
-
+// 3. ProviderClientFactory -- creates a client from AuthSession + ModelId
 // 4. ToolSchemaAdapter -- translate tool descriptors to your wire format
-struct MyAdapter;
-impl ToolSchemaAdapter for MyAdapter { /* ... */ }
 
-// 5. Register
 let registration = ProviderRegistration {
     descriptor: ProviderDescriptor { /* ... */ },
     auth_provider: Arc::new(MyAuthProvider),
@@ -568,20 +465,14 @@ let registration = ProviderRegistration {
 };
 
 let ctx = AppBuilder::new()
+    .with_data_dir("~/.config/my-app")
     .register_provider(registration)
     .build()?;
 ```
 
 ## Adding a New Tool
 
-Implement the `Tool` trait. The framework handles JSON Schema generation, deserialization, serialization, and error reporting.
-
 ```rust,ignore
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
-use llm_tools::{Tool, ToolInfo, ToolContext, JsonSchema};
-use llm_core::Result;
-
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CalculateInput {
     /// Mathematical expression to evaluate.
@@ -589,9 +480,7 @@ struct CalculateInput {
 }
 
 #[derive(Debug, Serialize)]
-struct CalculateOutput {
-    result: f64,
-}
+struct CalculateOutput { result: f64 }
 
 #[derive(Debug)]
 struct CalculatorTool;
@@ -611,10 +500,5 @@ impl Tool for CalculatorTool {
     }
 }
 
-// Register it
 registry.register(Arc::new(CalculatorTool) as Arc<dyn DynTool>);
 ```
-
-## License
-
-<!-- TODO: choose a license -->
