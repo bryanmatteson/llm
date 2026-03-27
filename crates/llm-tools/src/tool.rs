@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use llm_core::{FrameworkError, Metadata, Result, ToolId};
 
@@ -30,6 +30,10 @@ pub struct ToolInfo {
     /// Arbitrary key-value metadata.
     #[serde(default)]
     pub metadata: Metadata,
+    /// Provider-specific top-level fields merged into the advertised tool
+    /// object for providers that support custom tool properties.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extensions: Map<String, Value>,
 }
 
 impl ToolInfo {
@@ -42,6 +46,7 @@ impl ToolInfo {
             id: ToolId::new(id_str),
             description: description.into(),
             metadata: Metadata::new(),
+            extensions: Map::new(),
         }
     }
 
@@ -54,6 +59,12 @@ impl ToolInfo {
     /// Set the display name (if different from the id).
     pub fn display_name(mut self, name: impl Into<String>) -> Self {
         self.display_name = name.into();
+        self
+    }
+
+    /// Add a provider-specific top-level field to the advertised tool object.
+    pub fn extension(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.extensions.insert(key.into(), value);
         self
     }
 }
@@ -73,6 +84,8 @@ pub struct ToolDescriptor {
     pub description: String,
     pub parameters: Value,
     pub metadata: Metadata,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extensions: Map<String, Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -172,6 +185,7 @@ where
             description: info.description,
             parameters: json_schema_for::<T::Input>(),
             metadata: info.metadata,
+            extensions: info.extensions,
         }
     }
 

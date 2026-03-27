@@ -4,6 +4,7 @@ pub mod context;
 pub mod questionnaire_service;
 pub mod registry;
 pub mod session_service;
+pub mod skill_service;
 pub mod tool_service;
 
 // ── Re-exports ─────────────────────────────────────────────────────
@@ -14,6 +15,7 @@ pub use context::LlmContext;
 pub use questionnaire_service::QuestionnaireService;
 pub use registry::{ProviderClientFactory, ProviderRegistration, ProviderRegistry};
 pub use session_service::SessionService;
+pub use skill_service::SkillService;
 pub use tool_service::ToolService;
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -21,8 +23,11 @@ pub use tool_service::ToolService;
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use async_trait::async_trait;
     use tokio_stream::Stream;
@@ -178,6 +183,39 @@ mod tests {
         }
     }
 
+    fn tempdir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("llm-app-{prefix}-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn make_skill_dir(parent: &Path, name: &str, body: &str) -> PathBuf {
+        let dir = parent.join(name);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: {body}\n---\n\n# {name}\n"),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn stub_auth_session(provider: &str) -> AuthSession {
+        AuthSession {
+            provider_id: ProviderId::new(provider),
+            method: AuthMethod::ApiKey {
+                masked: "sk-****".into(),
+            },
+            tokens: TokenPair::new("tok".into(), None, 3600),
+            metadata: BTreeMap::new(),
+        }
+    }
+
     // -- Tests ---------------------------------------------------------------
 
     #[test]
@@ -207,5 +245,77 @@ mod tests {
 
         assert!(ctx.providers.list_provider_ids().is_empty());
         assert!(ctx.tools.list_tools().is_empty());
+    }
+
+    #[test]
+    fn build_fails_when_skill_loading_fails() {
+        let root = tempdir("bad-skill");
+        let bad_dir = root.join("broken");
+        fs::create_dir_all(&bad_dir).unwrap();
+        fs::write(
+            bad_dir.join("SKILL.md"),
+            "---\nname: BAD_NAME\ndescription: Broken skill.\n---\n",
+        )
+        .unwrap();
+
+        let err = AppBuilder::new().with_skill_dir(&root).build().unwrap_err();
+        assert!(matches!(err, FrameworkError::Config { .. }));
+        assert!(
+            err.to_string()
+                .contains("failed to load one or more skills")
+        );
+        assert!(err.to_string().contains("broken"));
+    }
+
+    #[tokio::test]
+    async fn create_session_injects_registered_skill_metadata() {
+        let root = tempdir("skills");
+        let system_dir = root.join(".system");
+        make_skill_dir(&system_dir, "openai-docs", "Use official OpenAI docs.");
+
+        let ctx = AppBuilder::new()
+            .with_skill_dir(&root)
+            .register_provider(make_registration("alpha"))
+            .build()
+            .unwrap();
+
+        let config = llm_core::SessionConfig::for_provider("alpha");
+        let auth = stub_auth_session("alpha");
+        let (handle, _tx, _rx) = ctx
+            .sessions
+            .create_session(&ProviderId::new("alpha"), &auth, config)
+            .await
+            .unwrap();
+
+        let prompt = handle.config.system_prompt.as_deref().unwrap();
+        assert!(prompt.contains("The following skills are available:"));
+        assert!(prompt.contains("- openai-docs: Use official OpenAI docs."));
+    }
+
+    #[tokio::test]
+    async fn create_session_preserves_existing_system_prompt() {
+        let root = tempdir("prompt-merge");
+        make_skill_dir(&root, "pdf", "Extract text from PDFs.");
+
+        let ctx = AppBuilder::new()
+            .with_skill_dir(&root)
+            .register_provider(make_registration("alpha"))
+            .build()
+            .unwrap();
+
+        let mut config = llm_core::SessionConfig::for_provider("alpha");
+        config.system_prompt = Some("Be concise.".into());
+
+        let auth = stub_auth_session("alpha");
+        let (handle, _tx, _rx) = ctx
+            .sessions
+            .create_session(&ProviderId::new("alpha"), &auth, config)
+            .await
+            .unwrap();
+
+        let prompt = handle.config.system_prompt.as_deref().unwrap();
+        assert!(prompt.starts_with("Be concise."));
+        assert!(prompt.contains("The following skills are available:"));
+        assert!(prompt.contains("- pdf: Extract text from PDFs."));
     }
 }

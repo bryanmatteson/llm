@@ -107,6 +107,7 @@ impl QuestionnaireBuilder {
             .map(|(v, l)| ChoiceOption {
                 value: (*v).into(),
                 label: (*l).into(),
+                description: None,
             })
             .collect();
         self.push(
@@ -126,6 +127,7 @@ impl QuestionnaireBuilder {
             .map(|v| ChoiceOption {
                 value: (*v).into(),
                 label: (*v).into(),
+                description: None,
             })
             .collect();
         QuestionKind::Choice {
@@ -155,7 +157,15 @@ impl QuestionnaireBuilder {
 
     /// Add a text question.
     pub fn text(self, id: impl Into<String>, label: impl Into<String>) -> Self {
-        self.push(QuestionKind::Text { placeholder: None }, id, label, |q| q)
+        self.push(
+            QuestionKind::Text {
+                placeholder: None,
+                default: None,
+            },
+            id,
+            label,
+            |q| q,
+        )
     }
 
     /// Add a text question with a configuration closure.
@@ -166,7 +176,10 @@ impl QuestionnaireBuilder {
         configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
     ) -> Self {
         self.push(
-            QuestionKind::Text { placeholder: None },
+            QuestionKind::Text {
+                placeholder: None,
+                default: None,
+            },
             id,
             label,
             configure,
@@ -222,10 +235,14 @@ impl QuestionnaireBuilder {
             .map(|v| ChoiceOption {
                 value: (*v).into(),
                 label: (*v).into(),
+                description: None,
             })
             .collect();
         self.push(
-            QuestionKind::MultiSelect { options: opts },
+            QuestionKind::MultiSelect {
+                options: opts,
+                default: None,
+            },
             id,
             label,
             |q| q,
@@ -245,10 +262,14 @@ impl QuestionnaireBuilder {
             .map(|v| ChoiceOption {
                 value: (*v).into(),
                 label: (*v).into(),
+                description: None,
             })
             .collect();
         self.push(
-            QuestionKind::MultiSelect { options: opts },
+            QuestionKind::MultiSelect {
+                options: opts,
+                default: None,
+            },
             id,
             label,
             configure,
@@ -367,10 +388,33 @@ impl QuestionConfig {
         self
     }
 
+    /// Set default pre-selected values for a multi-select question.
+    pub fn default_multi_select(mut self, values: &[&str]) -> Self {
+        if let QuestionKind::MultiSelect {
+            ref mut default, ..
+        } = self.kind
+        {
+            *default = Some(values.iter().map(|v| (*v).into()).collect());
+        }
+        self
+    }
+
+    /// Set a default value for a text question.
+    pub fn default_text(mut self, value: impl Into<String>) -> Self {
+        if let QuestionKind::Text {
+            ref mut default, ..
+        } = self.kind
+        {
+            *default = Some(value.into());
+        }
+        self
+    }
+
     /// Set a placeholder for a text question.
     pub fn placeholder(mut self, text: impl Into<String>) -> Self {
         if let QuestionKind::Text {
             ref mut placeholder,
+            ..
         } = self.kind
         {
             *placeholder = Some(text.into());
@@ -534,7 +578,7 @@ mod tests {
         let q0 = &q.questions[0];
         assert_eq!(q0.help_text.as_deref(), Some("Pick all that apply"));
         match &q0.kind {
-            QuestionKind::MultiSelect { options } => assert_eq!(options.len(), 3),
+            QuestionKind::MultiSelect { options, .. } => assert_eq!(options.len(), 3),
             _ => panic!("expected MultiSelect"),
         }
     }

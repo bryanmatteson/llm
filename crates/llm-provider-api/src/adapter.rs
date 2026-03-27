@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use serde_json::{Map, Value};
+
 /// A lightweight tool descriptor for provider-level interchange.
 ///
 /// This avoids depending on `llm-tools` while providing the essential
@@ -8,7 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct ProviderToolDescriptor {
     pub name: String,
     pub description: String,
-    pub parameters: serde_json::Value,
+    pub parameters: Value,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub extensions: Map<String, Value>,
 }
 
 /// A lightweight representation of a parsed tool call returned by a provider.
@@ -16,7 +20,7 @@ pub struct ProviderToolDescriptor {
 pub struct ProviderToolCall {
     pub id: String,
     pub name: String,
-    pub arguments: serde_json::Value,
+    pub arguments: Value,
 }
 
 /// Adapter trait for translating tool schemas and parsing tool calls

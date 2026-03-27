@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use llm_core::{FrameworkError, Result, ToolId};
+use llm_core::{FrameworkError, Result};
 
 use crate::context::ToolContext;
 use crate::tool::{DynTool, ToolDescriptor, ToolInfo};
@@ -16,10 +16,11 @@ use crate::tool::{DynTool, ToolDescriptor, ToolInfo};
 /// The handler receives a shared reference to application state `S` and
 /// a JSON `Value` of arguments, and returns a future producing a
 /// `Result<Value, E>` where `E` converts into `FrameworkError`.
-pub type HandlerFn<S, E> = for<'a> fn(
-    &'a S,
-    Value,
-) -> Pin<Box<dyn Future<Output = std::result::Result<Value, E>> + Send + 'a>>;
+pub type HandlerFn<S, E> =
+    for<'a> fn(
+        &'a S,
+        Value,
+    ) -> Pin<Box<dyn Future<Output = std::result::Result<Value, E>> + Send + 'a>>;
 
 /// A [`DynTool`] built from a function pointer and captured application state.
 ///
@@ -75,12 +76,7 @@ where
     /// - `parameters` – JSON Schema for the input (used in `tools/list`).
     /// - `state` – shared application state passed to the handler on each call.
     /// - `handler` – the async function to invoke.
-    pub fn new(
-        info: ToolInfo,
-        parameters: Value,
-        state: Arc<S>,
-        handler: HandlerFn<S, E>,
-    ) -> Self {
+    pub fn new(info: ToolInfo, parameters: Value, state: Arc<S>, handler: HandlerFn<S, E>) -> Self {
         Self {
             info,
             parameters,
@@ -117,13 +113,12 @@ where
             description: self.info.description.clone(),
             parameters: self.parameters.clone(),
             metadata: self.info.metadata.clone(),
+            extensions: self.info.extensions.clone(),
         }
     }
 
     async fn invoke(&self, input: Value, _ctx: &ToolContext) -> Result<Value> {
-        (self.handler)(&self.state, input)
-            .await
-            .map_err(Into::into)
+        (self.handler)(&self.state, input).await.map_err(Into::into)
     }
 }
 
@@ -134,7 +129,7 @@ mod tests {
 
     use serde_json::json;
 
-    use llm_core::{FrameworkError, ModelId, ProviderId, SessionId};
+    use llm_core::{FrameworkError, ModelId, ProviderId, SessionId, ToolId};
 
     use super::*;
 
@@ -198,10 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn fn_tool_propagates_errors() {
-        async fn failing(
-            _: &(),
-            _args: Value,
-        ) -> std::result::Result<Value, FrameworkError> {
+        async fn failing(_: &(), _args: Value) -> std::result::Result<Value, FrameworkError> {
             Err(FrameworkError::tool(
                 ToolId::new("fail"),
                 "intentional failure",
@@ -230,10 +222,7 @@ mod tests {
         }
     }
 
-    async fn custom_err_handler(
-        _: &(),
-        _args: Value,
-    ) -> std::result::Result<Value, CustomError> {
+    async fn custom_err_handler(_: &(), _args: Value) -> std::result::Result<Value, CustomError> {
         Err(CustomError("custom error".to_string()))
     }
 

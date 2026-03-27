@@ -25,14 +25,20 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
             QuestionKind::YesNo { default } => {
                 prompt_yes_no(&question.label, *default, &mut reader)?
             }
-            QuestionKind::Text { placeholder } => {
-                prompt_text(&question.label, placeholder.as_deref(), &mut reader)?
-            }
+            QuestionKind::Text {
+                placeholder,
+                default,
+            } => prompt_text(
+                &question.label,
+                placeholder.as_deref(),
+                default.as_deref(),
+                &mut reader,
+            )?,
             QuestionKind::Number { min, max, default } => {
                 prompt_number(&question.label, *min, *max, *default, &mut reader)?
             }
-            QuestionKind::MultiSelect { options } => {
-                prompt_multi_select(&question.label, options, &mut reader)?
+            QuestionKind::MultiSelect { options, default } => {
+                prompt_multi_select(&question.label, options, default.as_deref(), &mut reader)?
             }
         };
 
@@ -70,6 +76,9 @@ fn prompt_choice(
                 ""
             };
             eprintln!("  {}: {}{}", i + 1, opt.label, marker);
+            if let Some(desc) = &opt.description {
+                eprintln!("       {desc}");
+            }
         }
 
         let default_hint = default.map(|d| format!(" [{d}]")).unwrap_or_default();
@@ -148,10 +157,12 @@ fn prompt_yes_no(
 fn prompt_text(
     label: &str,
     placeholder: Option<&str>,
+    default: Option<&str>,
     reader: &mut impl BufRead,
 ) -> Result<AnswerValue> {
     let hint = placeholder.map(|p| format!(" ({p})")).unwrap_or_default();
-    eprint!("{label}{hint}: ");
+    let default_hint = default.map(|d| format!(" [{d}]")).unwrap_or_default();
+    eprint!("{label}{hint}{default_hint}: ");
     io::stderr().flush().ok();
 
     let mut input = String::new();
@@ -161,7 +172,11 @@ fn prompt_text(
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
-        Ok(AnswerValue::Text(None))
+        if let Some(d) = default {
+            Ok(AnswerValue::Text(Some(d.to_owned())))
+        } else {
+            Ok(AnswerValue::Text(None))
+        }
     } else {
         Ok(AnswerValue::Text(Some(trimmed.to_owned())))
     }
@@ -227,13 +242,24 @@ fn prompt_number(
 fn prompt_multi_select(
     label: &str,
     options: &[llm_questionnaire::ChoiceOption],
+    default: Option<&[String]>,
     reader: &mut impl BufRead,
 ) -> Result<AnswerValue> {
     eprintln!("{label}");
     for (i, opt) in options.iter().enumerate() {
-        eprintln!("  {}: {}", i + 1, opt.label);
+        let marker = default
+            .map(|d| d.iter().any(|v| v == &opt.value))
+            .unwrap_or(false);
+        let tag = if marker { " (default)" } else { "" };
+        eprintln!("  {}: {}{tag}", i + 1, opt.label);
+        if let Some(desc) = &opt.description {
+            eprintln!("       {desc}");
+        }
     }
-    eprint!("Select (comma-separated numbers, e.g. 1,3): ");
+    let default_hint = default
+        .map(|d| format!(" [{}]", d.join(",")))
+        .unwrap_or_default();
+    eprint!("Select (comma-separated numbers, e.g. 1,3){default_hint}: ");
     io::stderr().flush().ok();
 
     let mut input = String::new();
@@ -243,6 +269,9 @@ fn prompt_multi_select(
     let trimmed = input.trim();
 
     if trimmed.is_empty() {
+        if let Some(d) = default {
+            return Ok(AnswerValue::MultiSelect(d.to_vec()));
+        }
         return Ok(AnswerValue::MultiSelect(vec![]));
     }
 

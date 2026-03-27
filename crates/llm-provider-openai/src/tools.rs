@@ -100,6 +100,7 @@ mod tests {
                     },
                     "required": ["location"]
                 }),
+                extensions: Default::default(),
             },
             ProviderToolDescriptor {
                 name: "search".into(),
@@ -111,6 +112,7 @@ mod tests {
                     },
                     "required": ["query"]
                 }),
+                extensions: Default::default(),
             },
         ];
 

@@ -45,6 +45,14 @@ pub struct ToolDto {
     pub description: String,
 }
 
+/// Describes a skill registered in the framework.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
 /// A single question in a questionnaire flow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionDto {
@@ -141,6 +149,19 @@ mod tests {
         let json = serde_json::to_value(&dto).unwrap();
         assert_eq!(json["id"], "echo");
         assert_eq!(json["description"], "Echoes input back.");
+    }
+
+    #[test]
+    fn skill_dto_serializes() {
+        let dto = SkillDto {
+            id: "pdf-processing".into(),
+            name: "pdf-processing".into(),
+            description: "Extract text from PDFs.".into(),
+        };
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(json["id"], "pdf-processing");
+        assert_eq!(json["name"], "pdf-processing");
+        assert_eq!(json["description"], "Extract text from PDFs.");
     }
 
     #[test]

@@ -13,6 +13,7 @@
         "crates/llm-provider-anthropic",
         "crates/llm-provider-google",
         "crates/llm-app",
+        "crates/llm-skill",
         "crates/llm-mcp",
         "crates/llm-cli",
         "crates/llm-gui-api",
@@ -20,6 +21,7 @@
     ]
 
 [workspace.package]
+    version      = "0.1.0"
     edition      = "2024"
     rust-version = "1.85"
 
@@ -35,6 +37,7 @@
     llm-provider-openai    = { path = "crates/llm-provider-openai" }
     llm-provider-anthropic = { path = "crates/llm-provider-anthropic" }
     llm-provider-google    = { path = "crates/llm-provider-google" }
+    llm-skill              = { path = "crates/llm-skill" }
     llm-app                = { path = "crates/llm-app" }
     llm-mcp                = { path = "crates/llm-mcp" }
     llm-cli                = { path = "crates/llm-cli" }
@@ -50,6 +53,7 @@
     reqwest      = { version = "0.12", features = ["json", "stream"] }
     serde        = { version = "1", features = ["derive"] }
     serde_json   = "1"
+    serde_yaml   = "0.9"
     sha2         = "0.11.0"
     thiserror    = "2"
     tokio        = { version = "1", features = ["full"] }

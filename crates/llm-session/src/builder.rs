@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use llm_core::{Metadata, ModelId, ProviderId, ToolId};
 use llm_tools::{ToolApproval, ToolPolicy, ToolPolicyRule};
+use serde_json::{Map, Value};
 
 use crate::config::SessionConfig;
 use crate::limits::SessionLimits;
@@ -37,6 +38,8 @@ pub struct SessionBuilder {
     rules: Vec<ToolPolicyRule>,
     limits: SessionLimits,
     metadata: Metadata,
+    provider_tools: Vec<Value>,
+    provider_request: Map<String, Value>,
 }
 
 impl SessionBuilder {
@@ -50,6 +53,8 @@ impl SessionBuilder {
             rules: Vec::new(),
             limits: SessionLimits::default(),
             metadata: Metadata::new(),
+            provider_tools: Vec::new(),
+            provider_request: Map::new(),
         }
     }
 
@@ -160,6 +165,18 @@ impl SessionBuilder {
         self
     }
 
+    /// Add a provider-native tool descriptor to the session.
+    pub fn provider_tool(mut self, tool: Value) -> Self {
+        self.provider_tools.push(tool);
+        self
+    }
+
+    /// Add a provider-native top-level request field to the session.
+    pub fn provider_request_field(mut self, key: impl Into<String>, value: Value) -> Self {
+        self.provider_request.insert(key.into(), value);
+        self
+    }
+
     // -- Build ----------------------------------------------------------------
 
     /// Consume the builder and produce a [`SessionConfig`].
@@ -174,6 +191,8 @@ impl SessionBuilder {
             },
             limits: self.limits,
             metadata: self.metadata,
+            provider_tools: self.provider_tools,
+            provider_request: self.provider_request,
         }
     }
 }

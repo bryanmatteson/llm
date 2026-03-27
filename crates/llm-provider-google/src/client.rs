@@ -100,8 +100,11 @@ impl GoogleClient {
                     content,
                 } = block
                 {
-                    let response_value: serde_json::Value = serde_json::from_str(content)
-                        .unwrap_or(serde_json::json!({"result": content}));
+                    let response_value = match content {
+                        serde_json::Value::String(text) => serde_json::from_str(text)
+                            .unwrap_or_else(|_| serde_json::json!({"result": text})),
+                        other => other.clone(),
+                    };
                     parts.push(WirePart {
                         function_response: Some(WireFunctionResponse {
                             name: tool_use_id.clone(),

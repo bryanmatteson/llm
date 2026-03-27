@@ -62,6 +62,8 @@ impl QuestionnaireService {
             tool_policy: ToolPolicy::default(),
             limits,
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         }
     }
 }

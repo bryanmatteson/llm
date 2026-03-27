@@ -11,7 +11,7 @@ use serde_json::json;
 use llm_app::LlmContext;
 use llm_core::{FrameworkError, ModelId, ProviderDescriptor, ProviderId, Result};
 
-use crate::dto::{AuthStatusDto, EventDto, ProviderDto, SessionDto, ToolDto};
+use crate::dto::{AuthStatusDto, EventDto, ProviderDto, SessionDto, SkillDto, ToolDto};
 use crate::events::SessionEventAdapter;
 
 // ---------------------------------------------------------------------------
@@ -131,6 +131,8 @@ impl GuiFacade {
             tool_policy: Default::default(),
             limits: Default::default(),
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         };
 
         let (handle, _tx, _rx) = self
@@ -220,6 +222,21 @@ impl GuiFacade {
                 id: d.id.to_string(),
                 display_name: d.display_name,
                 description: d.description,
+            })
+            .collect())
+    }
+
+    // -- Skills -----------------------------------------------------------
+
+    /// List every registered skill as a [`SkillDto`].
+    pub async fn list_skills(&self) -> Result<Vec<SkillDto>> {
+        let skills = self.ctx.skills.list_skills();
+        Ok(skills
+            .into_iter()
+            .map(|s| SkillDto {
+                id: s.id.to_string(),
+                name: s.metadata.name.clone(),
+                description: s.metadata.description.clone(),
             })
             .collect())
     }

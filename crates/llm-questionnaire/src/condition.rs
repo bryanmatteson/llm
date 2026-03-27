@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::QuestionId;
@@ -6,8 +7,8 @@ use crate::answer::AnswerMap;
 
 /// A boolean expression evaluated against current answers to determine
 /// whether a question should be shown.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum ConditionExpr {
     /// True when the answer for `question_id` equals `value`.
     Equals {
@@ -38,10 +39,13 @@ impl ConditionExpr {
                 .map(|v| &v == value)
                 .unwrap_or(false),
 
+            // Returns false when the referenced question has not been answered,
+            // consistent with Equals — the question stays hidden until its
+            // prerequisite has been answered.
             ConditionExpr::NotEquals { question_id, value } => answers
                 .to_json_value(question_id)
                 .map(|v| &v != value)
-                .unwrap_or(true),
+                .unwrap_or(false),
 
             ConditionExpr::Answered { question_id } => answers.contains(question_id),
 
@@ -118,13 +122,15 @@ mod tests {
     }
 
     #[test]
-    fn not_equals_missing_question_is_true() {
+    fn not_equals_missing_question_is_false() {
+        // Unanswered questions return false for both Equals and NotEquals,
+        // keeping conditional questions hidden until their prerequisite is answered.
         let answers = make_answers();
         let cond = ConditionExpr::NotEquals {
             question_id: QuestionId::new("missing"),
             value: serde_json::Value::String("x".into()),
         };
-        assert!(cond.evaluate(&answers));
+        assert!(!cond.evaluate(&answers));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use llm_core::{ModelId, StopReason, TokenUsage};
+use llm_core::{Metadata, ModelId, StopReason, TokenUsage};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProviderEvent {
@@ -10,6 +10,7 @@ pub enum ProviderEvent {
     ToolCallStart {
         id: String,
         name: String,
+        metadata: Metadata,
     },
     ToolCallDelta {
         id: String,
@@ -22,5 +23,6 @@ pub enum ProviderEvent {
     Done {
         stop_reason: StopReason,
         model: ModelId,
+        metadata: Metadata,
     },
 }

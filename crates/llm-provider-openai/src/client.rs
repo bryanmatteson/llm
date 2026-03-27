@@ -49,6 +49,13 @@ impl OpenAiClient {
         format!("Bearer {}", self.auth_session.tokens.access_token)
     }
 
+    fn tool_result_to_text(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(text) => text.clone(),
+            other => serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
+        }
+    }
+
     /// Convert a canonical [`Message`] to the OpenAI wire format.
     fn message_to_wire(msg: &Message) -> WireMessage {
         let role = match msg.role {
@@ -97,7 +104,9 @@ impl OpenAiClient {
             msg.content
                 .iter()
                 .find_map(|b| match b {
-                    ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                    ContentBlock::ToolResult { content, .. } => {
+                        Some(Self::tool_result_to_text(content))
+                    }
                     _ => None,
                 })
                 .or_else(|| {

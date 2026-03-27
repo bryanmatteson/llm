@@ -1,9 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use llm_config::LlmConfig;
 use llm_core::Result;
 use llm_session::{DefaultSessionManager, SessionManager};
+use llm_skill::{Skill, SkillRegistry};
 use llm_store::{
     AccountStore, CredentialStore, FileAccountStore, FileCredentialStore, FileSessionStore,
     InMemoryAccountStore, InMemoryCredentialStore, InMemorySessionStore, SessionStore,
@@ -15,6 +16,7 @@ use crate::context::LlmContext;
 use crate::questionnaire_service::QuestionnaireService;
 use crate::registry::{ProviderRegistration, ProviderRegistry};
 use crate::session_service::SessionService;
+use crate::skill_service::SkillService;
 use crate::tool_service::ToolService;
 
 /// Builder for constructing an [`AppContext`] with all required services.
@@ -33,6 +35,8 @@ pub struct AppBuilder {
     session_store: Option<Arc<dyn SessionStore>>,
     registrations: Vec<ProviderRegistration>,
     tools: Vec<Arc<dyn DynTool>>,
+    skills: Vec<Skill>,
+    skill_dirs: Vec<PathBuf>,
     config: Option<LlmConfig>,
 }
 
@@ -45,6 +49,8 @@ impl AppBuilder {
             session_store: None,
             registrations: Vec::new(),
             tools: Vec::new(),
+            skills: Vec::new(),
+            skill_dirs: Vec::new(),
             config: None,
         }
     }
@@ -100,6 +106,22 @@ impl AppBuilder {
         self
     }
 
+    /// Register a pre-loaded skill with the application.
+    pub fn register_skill(mut self, skill: Skill) -> Self {
+        self.skills.push(skill);
+        self
+    }
+
+    /// Add a directory to scan for skills during [`build()`](Self::build).
+    ///
+    /// The directory is scanned recursively for nested `SKILL.md` files.
+    /// Non-existent directories are silently ignored, but malformed skills
+    /// cause [`build()`](Self::build) to fail.
+    pub fn with_skill_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.skill_dirs.push(dir.into());
+        self
+    }
+
     /// Apply an [`AppConfig`] to this builder.
     ///
     /// This sets session defaults and tool policies from the config file.
@@ -143,6 +165,26 @@ impl AppBuilder {
             tool_registry.register(tool);
         }
         let tool_registry = Arc::new(tool_registry);
+
+        // -- Skill registry --------------------------------------------------
+
+        let (mut skill_registry, skill_errors) =
+            SkillRegistry::discover_with_errors(&self.skill_dirs);
+        if !skill_errors.is_empty() {
+            let details = skill_errors
+                .into_iter()
+                .map(|(path, err)| format!("{}: {err}", path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(llm_core::FrameworkError::config(format!(
+                "failed to load one or more skills:\n{details}"
+            )));
+        }
+        for skill in self.skills {
+            skill_registry.register(skill);
+        }
+        let skill_metadata_prompt = skill_registry.metadata_prompt();
+        let skill_registry = Arc::new(skill_registry);
 
         // -- Apply config (if provided) --------------------------------------
 
@@ -192,17 +234,21 @@ impl AppBuilder {
             self.config
                 .as_ref()
                 .and_then(|c| c.default_provider.clone()),
+            skill_metadata_prompt,
         );
 
         let questionnaires = QuestionnaireService::new();
 
         let tools = ToolService::new(tool_registry);
 
+        let skills = SkillService::new(skill_registry);
+
         Ok(LlmContext {
             auth,
             sessions,
             questionnaires,
             tools,
+            skills,
             providers: registry,
             config: self.config,
         })

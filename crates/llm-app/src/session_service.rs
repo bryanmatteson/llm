@@ -22,6 +22,8 @@ pub struct SessionService {
     default_tool_policy: Option<ToolPolicy>,
     /// Default provider from the application config (if set).
     default_provider: Option<ProviderId>,
+    /// Level 1 skill metadata prompt injected into new sessions.
+    skill_metadata_prompt: Option<String>,
 }
 
 impl SessionService {
@@ -33,6 +35,7 @@ impl SessionService {
         session_defaults: Option<SessionDefaults>,
         default_tool_policy: Option<ToolPolicy>,
         default_provider: Option<ProviderId>,
+        skill_metadata_prompt: Option<String>,
     ) -> Self {
         Self {
             provider_registry,
@@ -41,6 +44,7 @@ impl SessionService {
             session_defaults,
             default_tool_policy,
             default_provider,
+            skill_metadata_prompt,
         }
     }
 
@@ -70,6 +74,8 @@ impl SessionService {
         auth: &AuthSession,
         config: SessionConfig,
     ) -> Result<(SessionHandle, EventSender, EventReceiver)> {
+        let config = self.inject_skill_metadata(config);
+
         // Verify the provider exists and create a client to prove the auth is
         // valid. We hold the client in the handle conceptually, but since
         // `SessionHandle` does not store a client we just validate here.
@@ -93,6 +99,21 @@ impl SessionService {
         let (tx, rx) = event_channel();
 
         Ok((handle, tx, rx))
+    }
+
+    fn inject_skill_metadata(&self, mut config: SessionConfig) -> SessionConfig {
+        let Some(skill_metadata_prompt) = self.skill_metadata_prompt.as_deref() else {
+            return config;
+        };
+
+        config.system_prompt = Some(match config.system_prompt.take() {
+            Some(system_prompt) if !system_prompt.trim().is_empty() => {
+                format!("{system_prompt}\n\n{skill_metadata_prompt}")
+            }
+            _ => skill_metadata_prompt.to_string(),
+        });
+
+        config
     }
 
     /// Send a user message to an existing session and run the turn loop to

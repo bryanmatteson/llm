@@ -7,4 +7,8 @@ rust-version.workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 regex-lite = { workspace = true }
+async-trait = { workspace = true }
+llm-core = { path = "../llm-core" }
+llm-tools = { path = "../llm-tools" }

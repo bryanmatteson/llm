@@ -121,9 +121,10 @@ impl EnvCredentialDiscovery {
     /// Returns `None` if no credential environment variable is set.
     pub fn discover(&self, provider: &str) -> Option<ProviderCredential> {
         let normalized = provider.trim().to_ascii_lowercase();
-        let config = self.configs.iter().find(|c| {
-            c.provider == normalized || c.aliases.iter().any(|a| *a == normalized)
-        })?;
+        let config = self
+            .configs
+            .iter()
+            .find(|c| c.provider == normalized || c.aliases.iter().any(|a| *a == normalized))?;
 
         let base_url = self.first_env(config.base_url_vars);
 
@@ -154,9 +155,7 @@ impl EnvCredentialDiscovery {
                 let canonical = self
                     .configs
                     .iter()
-                    .find(|c| {
-                        c.provider == *provider || c.aliases.iter().any(|a| *a == *provider)
-                    })
+                    .find(|c| c.provider == *provider || c.aliases.iter().any(|a| *a == *provider))
                     .map(|c| c.provider)
                     .unwrap_or(provider);
                 return Some((canonical.to_string(), cred));
@@ -190,21 +189,13 @@ impl EnvCredentialDiscovery {
 ///
 /// API keys get a long-lived (365-day) token pair.
 /// Bearer tokens get a shorter-lived (1-hour) token pair.
-pub fn build_auth_session(
-    provider_id: ProviderId,
-    credential: &ProviderCredential,
-) -> AuthSession {
+pub fn build_auth_session(provider_id: ProviderId, credential: &ProviderCredential) -> AuthSession {
     let (method, expires_secs) = match credential.kind {
         CredentialKind::ApiKey => {
             let masked = mask_token(&credential.token);
             (AuthMethod::ApiKey { masked }, 365 * 24 * 3600)
         }
-        CredentialKind::BearerToken => (
-            AuthMethod::Bearer {
-                expires_at: None,
-            },
-            3600,
-        ),
+        CredentialKind::BearerToken => (AuthMethod::Bearer { expires_at: None }, 3600),
     };
 
     AuthSession {
@@ -221,7 +212,11 @@ fn read_env(var: &str) -> Option<String> {
     match std::env::var(var) {
         Ok(val) => {
             let trimmed = val.trim().to_string();
-            if trimmed.is_empty() { None } else { Some(trimmed) }
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            }
         }
         Err(_) => None,
     }

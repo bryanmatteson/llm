@@ -1,6 +1,16 @@
 use llm_provider_api::{ProviderToolCall, ProviderToolDescriptor, ToolSchemaAdapter};
 use serde_json::{Value, json};
 
+pub const CODE_EXECUTION_20250825: &str = "code_execution_20250825";
+pub const CODE_EXECUTION_20260120: &str = "code_execution_20260120";
+
+pub fn code_execution_tool(tool_type: &str) -> Value {
+    json!({
+        "type": tool_type,
+        "name": "code_execution",
+    })
+}
+
 /// Translates tool descriptors and parses tool calls in the format expected
 /// by the Anthropic Messages API.
 ///
@@ -31,11 +41,17 @@ impl ToolSchemaAdapter for AnthropicToolFormat {
         tools
             .iter()
             .map(|t| {
-                json!({
+                let mut tool = json!({
                     "name": t.name,
                     "description": t.description,
                     "input_schema": t.parameters,
-                })
+                });
+
+                if let Some(obj) = tool.as_object_mut() {
+                    obj.extend(t.extensions.clone());
+                }
+
+                tool
             })
             .collect()
     }
@@ -98,6 +114,7 @@ mod tests {
                     },
                     "required": ["location"]
                 }),
+                extensions: Default::default(),
             },
             ProviderToolDescriptor {
                 name: "search".into(),
@@ -109,6 +126,7 @@ mod tests {
                     },
                     "required": ["query"]
                 }),
+                extensions: Default::default(),
             },
         ];
 
@@ -130,6 +148,27 @@ mod tests {
         assert!(result[0].get("parameters").is_none());
 
         assert_eq!(result[1]["name"], "search");
+    }
+
+    #[test]
+    fn translate_descriptors_merges_extensions() {
+        let adapter = AnthropicToolFormat;
+        let descriptors = vec![ProviderToolDescriptor {
+            name: "query_database".into(),
+            description: "Query the database".into(),
+            parameters: json!({"type": "object"}),
+            extensions: serde_json::Map::from_iter([
+                ("allowed_callers".into(), json!(["code_execution_20260120"])),
+                ("eager_input_streaming".into(), json!(true)),
+            ]),
+        }];
+
+        let result = adapter.translate_descriptors(&descriptors);
+        assert_eq!(
+            result[0]["allowed_callers"],
+            json!(["code_execution_20260120"])
+        );
+        assert_eq!(result[0]["eager_input_streaming"], true);
     }
 
     #[test]

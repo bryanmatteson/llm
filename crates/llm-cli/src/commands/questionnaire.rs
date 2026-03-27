@@ -69,14 +69,17 @@ fn example_questionnaire(id: &str) -> Result<Questionnaire> {
                             ChoiceOption {
                                 value: "openai".into(),
                                 label: "OpenAI".into(),
+                                description: None,
                             },
                             ChoiceOption {
                                 value: "anthropic".into(),
                                 label: "Anthropic".into(),
+                                description: None,
                             },
                             ChoiceOption {
                                 value: "local".into(),
                                 label: "Local (Ollama)".into(),
+                                description: None,
                             },
                         ],
                         default: Some("openai".into()),
@@ -115,6 +118,7 @@ fn example_questionnaire(id: &str) -> Result<Questionnaire> {
                     help_text: None,
                     kind: QuestionKind::Text {
                         placeholder: Some("You are a helpful assistant.".into()),
+                        default: None,
                     },
                     required: false,
                     validation: vec![],

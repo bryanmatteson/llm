@@ -41,7 +41,7 @@ impl ConversationState {
     pub fn append_tool_result(
         &mut self,
         tool_use_id: impl Into<String>,
-        content: impl Into<String>,
+        content: impl Into<serde_json::Value>,
     ) {
         self.messages
             .push(Message::tool_result(tool_use_id, content));

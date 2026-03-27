@@ -31,6 +31,7 @@ llm-config        = { workspace = true }
 llm-store         = { workspace = true }
 llm-provider-api  = { workspace = true }
 llm-session       = { workspace = true }
+llm-skill         = { workspace = true }
 llm-app           = { workspace = true }
 
 # Optional providers

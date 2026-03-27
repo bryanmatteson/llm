@@ -231,9 +231,15 @@ async fn status(ctx: &AppContext) -> Result<()> {
 /// Best-effort URL opener.
 fn open_url(url: &str) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
-    return std::process::Command::new("open").arg(url).spawn().map(|_| ());
+    return std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ());
     #[cfg(target_os = "linux")]
-    return std::process::Command::new("xdg-open").arg(url).spawn().map(|_| ());
+    return std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ());
     #[cfg(target_os = "windows")]
     return std::process::Command::new("cmd")
         .args(["/C", "start", url])

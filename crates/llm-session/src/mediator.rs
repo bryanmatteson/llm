@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio_stream::StreamExt;
 
 use llm_core::{
-    ContentBlock, FrameworkError, Message, ModelId, Result, Role, StopReason, TokenUsage,
+    ContentBlock, FrameworkError, Message, Metadata, ModelId, Result, Role, StopReason, TokenUsage,
 };
 use llm_provider_api::{
     LlmProviderClient, ProviderEvent, ProviderToolDescriptor, ToolSchemaAdapter, TurnRequest,
@@ -14,6 +14,11 @@ use crate::approval::{ApprovalHandler, ApprovalRequest, ApprovalResponse};
 use crate::config::SessionConfig;
 use crate::conversation::ConversationState;
 use crate::event::{EventSender, SessionEvent};
+
+const ANTHROPIC_CALLER_TYPE_KEY: &str = "anthropic.caller_type";
+const ANTHROPIC_CALLER_TOOL_ID_KEY: &str = "anthropic.caller_tool_id";
+const RAW_TOOL_INPUT_JSON_KEY: &str = "tool.raw_input_json";
+const INVALID_TOOL_INPUT_JSON_KEY: &str = "tool.invalid_input_json";
 
 /// All the shared state and dependencies needed to run a turn loop.
 ///
@@ -63,23 +68,80 @@ fn build_turn_request(
     config: &SessionConfig,
     tool_descriptors_json: &[serde_json::Value],
 ) -> TurnRequest {
+    let mut tools = tool_descriptors_json.to_vec();
+    tools.extend(config.provider_tools.iter().cloned());
+
     TurnRequest {
         system_prompt: config.system_prompt.clone(),
         messages: conversation.messages().to_vec(),
-        tools: tool_descriptors_json.to_vec(),
+        tools,
+        provider_request: config.provider_request.clone(),
         model: config.model.clone(),
         max_tokens: None,
         temperature: None,
     }
 }
 
+#[derive(Debug, Clone)]
+struct ToolCallRequest {
+    id: String,
+    name: String,
+    arguments: serde_json::Value,
+    metadata: Metadata,
+}
+
 /// Extract tool-use blocks from assistant messages returned by the provider.
-fn extract_tool_calls(messages: &[Message]) -> Vec<(String, String, serde_json::Value)> {
+fn extract_tool_calls(messages: &[Message]) -> Vec<ToolCallRequest> {
     let mut calls = Vec::new();
     for msg in messages {
+        if let Some(raw_content) = msg.metadata.get("anthropic.raw_content_json") {
+            if let Ok(blocks) = serde_json::from_str::<Vec<serde_json::Value>>(raw_content) {
+                for block in blocks {
+                    if block.get("type").and_then(serde_json::Value::as_str) != Some("tool_use") {
+                        continue;
+                    }
+                    let Some(id) = block.get("id").and_then(serde_json::Value::as_str) else {
+                        continue;
+                    };
+                    let Some(name) = block.get("name").and_then(serde_json::Value::as_str) else {
+                        continue;
+                    };
+                    let arguments = block
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                    let mut metadata = Metadata::new();
+                    if let Some(caller_type) = block
+                        .pointer("/caller/type")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        metadata.insert(ANTHROPIC_CALLER_TYPE_KEY.into(), caller_type.to_string());
+                    }
+                    if let Some(tool_id) = block
+                        .pointer("/caller/tool_id")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        metadata.insert(ANTHROPIC_CALLER_TOOL_ID_KEY.into(), tool_id.to_string());
+                    }
+                    calls.push(ToolCallRequest {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        arguments,
+                        metadata,
+                    });
+                }
+                continue;
+            }
+        }
+
         for block in &msg.content {
             if let ContentBlock::ToolUse { id, name, input } = block {
-                calls.push((id.clone(), name.clone(), input.clone()));
+                calls.push(ToolCallRequest {
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: input.clone(),
+                    metadata: Metadata::new(),
+                });
             }
         }
     }
@@ -99,6 +161,7 @@ fn translate_tools(
             name: d.wire_name,
             description: d.description,
             parameters: d.parameters,
+            extensions: d.extensions,
         })
         .collect();
     adapter.translate_descriptors(&descriptors)
@@ -115,21 +178,52 @@ struct ToolExecutionResult {
 /// This is the shared tool-execution logic used by both `run_turn_loop` and
 /// `run_streaming_turn_loop`.
 async fn execute_tool_calls(
-    calls: &[(String, String, serde_json::Value)],
+    calls: &[ToolCallRequest],
     ctx: &mut TurnLoopContext<'_>,
     last_model: &ModelId,
 ) -> Result<ToolExecutionResult> {
     let mut tool_calls_this_turn: usize = 0;
     let mut total_made: usize = 0;
 
-    for (call_id, tool_name, arguments) in calls {
+    for call in calls {
+        let call_id = &call.id;
+        let tool_name = &call.name;
+        let arguments = &call.arguments;
+
         if tool_calls_this_turn >= ctx.config.limits.max_tool_calls_per_turn {
             let err_msg = format!(
                 "Tool call limit ({}) reached; call to '{}' was skipped.",
                 ctx.config.limits.max_tool_calls_per_turn, tool_name
             );
-            ctx.conversation.append_tool_result(call_id, &err_msg);
+            ctx.conversation.append_tool_result(call_id, err_msg);
             total_made += 1;
+            continue;
+        }
+
+        if call
+            .metadata
+            .get(INVALID_TOOL_INPUT_JSON_KEY)
+            .map(|v| v == "true")
+            .unwrap_or(false)
+        {
+            let raw = call
+                .metadata
+                .get(RAW_TOOL_INPUT_JSON_KEY)
+                .cloned()
+                .unwrap_or_default();
+            let wrapped = serde_json::json!({
+                "INVALID_JSON": raw,
+                "error": format!("Tool input for '{}' was not valid JSON.", tool_name),
+            });
+            ctx.conversation.append_tool_result(call_id, wrapped);
+            emit(
+                ctx.event_tx,
+                SessionEvent::Error {
+                    message: format!("Received invalid streamed JSON for tool '{tool_name}'."),
+                },
+            );
+            total_made += 1;
+            tool_calls_this_turn += 1;
             continue;
         }
 
@@ -147,7 +241,8 @@ async fn execute_tool_calls(
             Some(t) => t,
             None => {
                 let err_msg = format!("Tool '{tool_name}' is not available.");
-                ctx.conversation.append_tool_result(call_id, &err_msg);
+                ctx.conversation
+                    .append_tool_result(call_id, err_msg.clone());
                 emit(ctx.event_tx, SessionEvent::Error { message: err_msg });
                 total_made += 1;
                 tool_calls_this_turn += 1;
@@ -163,7 +258,8 @@ async fn execute_tool_calls(
         match approval {
             ToolApproval::Deny => {
                 let deny_msg = format!("Tool '{tool_name}' is denied by policy.");
-                ctx.conversation.append_tool_result(call_id, &deny_msg);
+                ctx.conversation
+                    .append_tool_result(call_id, deny_msg.clone());
                 emit(ctx.event_tx, SessionEvent::Error { message: deny_msg });
                 total_made += 1;
                 tool_calls_this_turn += 1;
@@ -195,7 +291,7 @@ async fn execute_tool_calls(
                     ApprovalResponse::Deny { reason } => {
                         let deny_msg = reason
                             .unwrap_or_else(|| format!("User denied tool call '{tool_name}'."));
-                        ctx.conversation.append_tool_result(call_id, &deny_msg);
+                        ctx.conversation.append_tool_result(call_id, deny_msg);
                         total_made += 1;
                         tool_calls_this_turn += 1;
                         continue;
@@ -233,18 +329,18 @@ async fn execute_tool_calls(
 
         let (content, summary) = match exec_result {
             Ok(value) => {
-                let content_str =
+                let summary_source =
                     serde_json::to_string(&value).unwrap_or_else(|_| value.to_string());
-                let summary = content_str.chars().take(120).collect::<String>();
-                (content_str, summary)
+                let summary = summary_source.chars().take(120).collect::<String>();
+                (value, summary)
             }
             Err(e) => {
                 let err_str = format!("Tool execution error: {e}");
-                (err_str.clone(), err_str)
+                (serde_json::Value::String(err_str.clone()), err_str)
             }
         };
 
-        ctx.conversation.append_tool_result(call_id, &content);
+        ctx.conversation.append_tool_result(call_id, content);
 
         emit(
             ctx.event_tx,
@@ -357,6 +453,8 @@ pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> 
                 continue;
             }
 
+            StopReason::PauseTurn => continue,
+
             StopReason::EndTurn | StopReason::Stop | StopReason::MaxTokens => {
                 let final_text = response
                     .messages
@@ -408,17 +506,21 @@ struct StreamAccumulator {
     /// Incremental text content from `TextDelta` events.
     text: String,
     /// Completed tool calls: `(id, name, parsed_args_json)`.
-    tool_calls: Vec<(String, String, serde_json::Value)>,
+    tool_calls: Vec<ToolCallRequest>,
     /// Per-tool-call argument fragments keyed by call ID.
     current_tool_args: HashMap<String, String>,
     /// Per-tool-call names keyed by call ID (from `ToolCallStart`).
     current_tool_names: HashMap<String, String>,
+    /// Per-tool-call metadata keyed by call ID.
+    current_tool_metadata: HashMap<String, Metadata>,
     /// Accumulated token usage for this turn.
     usage: TokenUsage,
     /// Stop reason reported by the `Done` event.
     stop_reason: Option<StopReason>,
     /// Model ID reported by the `Done` event.
     model: Option<ModelId>,
+    /// Message metadata reported by the provider.
+    metadata: Metadata,
 }
 
 impl StreamAccumulator {
@@ -428,9 +530,11 @@ impl StreamAccumulator {
             tool_calls: Vec::new(),
             current_tool_args: HashMap::new(),
             current_tool_names: HashMap::new(),
+            current_tool_metadata: HashMap::new(),
             usage: TokenUsage::default(),
             stop_reason: None,
             model: None,
+            metadata: Metadata::new(),
         }
     }
 
@@ -442,18 +546,18 @@ impl StreamAccumulator {
             blocks.push(ContentBlock::Text(self.text));
         }
 
-        for (id, name, input) in &self.tool_calls {
+        for call in &self.tool_calls {
             blocks.push(ContentBlock::ToolUse {
-                id: id.clone(),
-                name: name.clone(),
-                input: input.clone(),
+                id: call.id.clone(),
+                name: call.name.clone(),
+                input: call.arguments.clone(),
             });
         }
 
         Message {
             role: Role::Assistant,
             content: blocks,
-            metadata: Default::default(),
+            metadata: self.metadata,
         }
     }
 }
@@ -488,19 +592,15 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
 
         // A single timeout wraps both stream creation AND consumption so
         // the total wall-clock budget for one turn is exactly `turn_timeout`.
-        let stream_result = tokio::time::timeout(
-            ctx.config.limits.turn_timeout,
-            async {
-                let stream = ctx.client.stream_turn(&request).await?;
-                consume_stream(stream, ctx.event_tx).await
-            },
-        )
+        let stream_result = tokio::time::timeout(ctx.config.limits.turn_timeout, async {
+            let stream = ctx.client.stream_turn(&request).await?;
+            consume_stream(stream, ctx.event_tx).await
+        })
         .await;
 
         let (turn_text, turn_tool_calls, turn_usage, turn_stop_reason, turn_model) =
             match stream_result {
                 Ok(Ok(acc)) => {
-
                     let text = acc.text.clone();
                     let tool_calls = acc.tool_calls.clone();
                     let usage = acc.usage.clone();
@@ -586,6 +686,8 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
                 total_tool_calls += result.calls_made;
                 continue;
             }
+            StopReason::PauseTurn => continue,
+
             StopReason::EndTurn | StopReason::Stop | StopReason::MaxTokens => {
                 emit(
                     ctx.event_tx,
@@ -638,8 +740,9 @@ async fn consume_stream(
                 );
                 acc.text.push_str(&text);
             }
-            ProviderEvent::ToolCallStart { id, name } => {
+            ProviderEvent::ToolCallStart { id, name, metadata } => {
                 acc.current_tool_names.insert(id.clone(), name);
+                acc.current_tool_metadata.insert(id.clone(), metadata);
                 acc.current_tool_args.insert(id, String::new());
             }
             ProviderEvent::ToolCallDelta {
@@ -654,17 +757,34 @@ async fn consume_stream(
             ProviderEvent::ToolCallEnd { id } => {
                 let args_json = acc.current_tool_args.remove(&id).unwrap_or_default();
                 let name = acc.current_tool_names.remove(&id).unwrap_or_default();
-                let parsed: serde_json::Value = serde_json::from_str(&args_json)
-                    .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-                acc.tool_calls.push((id, name, parsed));
+                let mut metadata = acc.current_tool_metadata.remove(&id).unwrap_or_default();
+                let parsed = match serde_json::from_str(&args_json) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        metadata.insert(INVALID_TOOL_INPUT_JSON_KEY.into(), "true".into());
+                        metadata.insert(RAW_TOOL_INPUT_JSON_KEY.into(), args_json.clone());
+                        serde_json::Value::Object(serde_json::Map::new())
+                    }
+                };
+                acc.tool_calls.push(ToolCallRequest {
+                    id,
+                    name,
+                    arguments: parsed,
+                    metadata,
+                });
             }
             ProviderEvent::UsageReported(usage) => {
                 acc.usage.input_tokens += usage.input_tokens;
                 acc.usage.output_tokens += usage.output_tokens;
             }
-            ProviderEvent::Done { stop_reason, model } => {
+            ProviderEvent::Done {
+                stop_reason,
+                model,
+                metadata,
+            } => {
                 acc.stop_reason = Some(stop_reason);
                 acc.model = Some(model);
+                acc.metadata = metadata;
             }
         }
     }
@@ -786,6 +906,8 @@ mod tests {
             tool_policy: Default::default(),
             limits: SessionLimits::default(),
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         };
         let approval = AutoApproveHandler;
 
@@ -874,6 +996,7 @@ mod tests {
             events.push(Ok(ProviderEvent::Done {
                 stop_reason: StopReason::EndTurn,
                 model: self.model.clone(),
+                metadata: Default::default(),
             }));
 
             Ok(Box::pin(tokio_stream::iter(events)))
@@ -910,6 +1033,8 @@ mod tests {
             tool_policy: Default::default(),
             limits: SessionLimits::default(),
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         };
         let approval = AutoApproveHandler;
 
@@ -978,6 +1103,8 @@ mod tests {
             tool_policy: Default::default(),
             limits: SessionLimits::default(),
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         };
         let approval = AutoApproveHandler;
 

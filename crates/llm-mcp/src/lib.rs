@@ -185,9 +185,7 @@ impl McpServer {
         match tool.invoke(params.arguments, &self.context).await {
             Ok(payload) => {
                 let text = serde_json::to_string_pretty(&payload)
-                    .unwrap_or_else(|error| {
-                        format!("tool response serialization failed: {error}")
-                    });
+                    .unwrap_or_else(|error| format!("tool response serialization failed: {error}"));
                 json!({
                     "isError": false,
                     "content": [{
@@ -451,6 +449,7 @@ mod tests {
             description: "Search the web".to_string(),
             parameters: json!({"type": "object"}),
             metadata: BTreeMap::new(),
+            extensions: serde_json::Map::new(),
         };
         let def = McpToolDefinition::from(&desc);
         assert_eq!(def.name, "web_search");

@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::answer::AnswerValue;
 use crate::schema::{ChoiceOption, QuestionKind, Questionnaire};
 
 /// A rule applied to validate an individual answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum ValidationRule {
     /// The answer must be provided (non-empty text, non-null).
     Required,
@@ -54,7 +55,7 @@ pub fn validate_answer(
                 }
             }
         }
-        (QuestionKind::MultiSelect { options }, AnswerValue::MultiSelect(selected)) => {
+        (QuestionKind::MultiSelect { options, .. }, AnswerValue::MultiSelect(selected)) => {
             for s in selected {
                 if !options.iter().any(|o| o.value == *s) {
                     errors.push(format!(
@@ -136,16 +137,39 @@ pub fn validate_answer(
     errors
 }
 
+/// Recursively collect all question IDs referenced by a condition expression.
+fn collect_condition_refs(cond: &crate::condition::ConditionExpr) -> Vec<&crate::ids::QuestionId> {
+    use crate::condition::ConditionExpr;
+    match cond {
+        ConditionExpr::Equals { question_id, .. }
+        | ConditionExpr::NotEquals { question_id, .. }
+        | ConditionExpr::Answered { question_id } => vec![question_id],
+        ConditionExpr::And(exprs) | ConditionExpr::Or(exprs) => {
+            exprs.iter().flat_map(collect_condition_refs).collect()
+        }
+        ConditionExpr::Not(inner) => collect_condition_refs(inner),
+    }
+}
+
 /// Validate the overall structure of a questionnaire definition.
 ///
 /// Checks:
 /// - No duplicate question IDs
+/// - No empty question IDs or labels
 /// - Choice defaults (if present) exist in the options list
 /// - Choice options have unique values
 /// - Choice / MultiSelect questions have at least one option
+/// - Condition expressions reference existing question IDs
 pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     let mut seen_ids = HashSet::new();
+
+    // Collect all question IDs first for condition reference validation.
+    let all_ids: HashSet<&str> = questionnaire
+        .questions
+        .iter()
+        .map(|q| q.id.as_str())
+        .collect();
 
     for question in &questionnaire.questions {
         let qid = question.id.as_str();
@@ -158,6 +182,22 @@ pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<()
         // Empty ID check.
         if qid.trim().is_empty() {
             errors.push("question id must not be empty".to_string());
+        }
+
+        // Empty label check.
+        if question.label.trim().is_empty() {
+            errors.push(format!("question '{qid}' has an empty label"));
+        }
+
+        // Condition reference check.
+        if let Some(cond) = &question.condition {
+            for ref_id in collect_condition_refs(cond) {
+                if !all_ids.contains(ref_id.as_str()) {
+                    errors.push(format!(
+                        "question '{qid}' has a condition referencing unknown question '{ref_id}'"
+                    ));
+                }
+            }
         }
 
         match &question.kind {
@@ -186,7 +226,7 @@ pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<()
                     }
                 }
             }
-            QuestionKind::MultiSelect { options } => {
+            QuestionKind::MultiSelect { options, default } => {
                 if options.is_empty() {
                     errors.push(format!(
                         "multi-select question '{qid}' must have at least one option"
@@ -199,6 +239,16 @@ pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<()
                             "multi-select question '{qid}' has duplicate option value '{}'",
                             opt.value
                         ));
+                    }
+                }
+                // Defaults must all be in options.
+                if let Some(defaults) = default {
+                    for def in defaults {
+                        if !options.iter().any(|o| o.value == *def) {
+                            errors.push(format!(
+                                "multi-select question '{qid}' has default '{def}' which is not in its options"
+                            ));
+                        }
                     }
                 }
             }
@@ -265,19 +315,18 @@ mod tests {
 
     // -------- validate_answer tests --------
 
+    fn opt(value: &str, label: &str) -> ChoiceOption {
+        ChoiceOption {
+            value: value.into(),
+            label: label.into(),
+            description: None,
+        }
+    }
+
     #[test]
     fn valid_choice_answer() {
         let kind = QuestionKind::Choice {
-            options: vec![
-                ChoiceOption {
-                    value: "a".into(),
-                    label: "A".into(),
-                },
-                ChoiceOption {
-                    value: "b".into(),
-                    label: "B".into(),
-                },
-            ],
+            options: vec![opt("a", "A"), opt("b", "B")],
             default: None,
         };
         let errs = validate_answer(&kind, &[], &AnswerValue::Choice("a".into()));
@@ -287,10 +336,7 @@ mod tests {
     #[test]
     fn invalid_choice_value() {
         let kind = QuestionKind::Choice {
-            options: vec![ChoiceOption {
-                value: "a".into(),
-                label: "A".into(),
-            }],
+            options: vec![opt("a", "A")],
             default: None,
         };
         let errs = validate_answer(&kind, &[], &AnswerValue::Choice("z".into()));
@@ -308,14 +354,20 @@ mod tests {
 
     #[test]
     fn required_rule_empty_text() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(&kind, &[ValidationRule::Required], &AnswerValue::Text(None));
         assert!(errs.iter().any(|e| e.contains("required")));
     }
 
     #[test]
     fn required_rule_blank_text() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::Required],
@@ -326,7 +378,10 @@ mod tests {
 
     #[test]
     fn required_rule_present_text() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::Required],
@@ -337,7 +392,10 @@ mod tests {
 
     #[test]
     fn min_length_rule() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::MinLength(5)],
@@ -355,7 +413,10 @@ mod tests {
 
     #[test]
     fn max_length_rule() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::MaxLength(3)],
@@ -366,7 +427,10 @@ mod tests {
 
     #[test]
     fn pattern_rule_pass() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::Pattern(r"^\d+$".into())],
@@ -377,7 +441,10 @@ mod tests {
 
     #[test]
     fn pattern_rule_fail() {
-        let kind = QuestionKind::Text { placeholder: None };
+        let kind = QuestionKind::Text {
+            placeholder: None,
+            default: None,
+        };
         let errs = validate_answer(
             &kind,
             &[ValidationRule::Pattern(r"^\d+$".into())],
@@ -434,16 +501,8 @@ mod tests {
     #[test]
     fn multi_select_valid() {
         let kind = QuestionKind::MultiSelect {
-            options: vec![
-                ChoiceOption {
-                    value: "a".into(),
-                    label: "A".into(),
-                },
-                ChoiceOption {
-                    value: "b".into(),
-                    label: "B".into(),
-                },
-            ],
+            options: vec![opt("a", "A"), opt("b", "B")],
+            default: None,
         };
         let errs = validate_answer(
             &kind,
@@ -456,10 +515,8 @@ mod tests {
     #[test]
     fn multi_select_invalid_option() {
         let kind = QuestionKind::MultiSelect {
-            options: vec![ChoiceOption {
-                value: "a".into(),
-                label: "A".into(),
-            }],
+            options: vec![opt("a", "A")],
+            default: None,
         };
         let errs = validate_answer(
             &kind,
@@ -472,10 +529,8 @@ mod tests {
     #[test]
     fn required_multi_select_empty() {
         let kind = QuestionKind::MultiSelect {
-            options: vec![ChoiceOption {
-                value: "a".into(),
-                label: "A".into(),
-            }],
+            options: vec![opt("a", "A")],
+            default: None,
         };
         let errs = validate_answer(
             &kind,
@@ -507,6 +562,7 @@ mod tests {
                     .map(|(v, l)| ChoiceOption {
                         value: v.into(),
                         label: l.into(),
+                        description: None,
                     })
                     .collect(),
                 default: default.map(|s| s.into()),
@@ -585,6 +641,24 @@ mod tests {
             errs.iter()
                 .any(|e| e.contains("min") && e.contains("greater than max"))
         );
+    }
+
+    #[test]
+    fn rejects_multi_select_default_not_in_options() {
+        let q = make_simple_questionnaire(vec![Question {
+            id: QuestionId::new("ms"),
+            label: "Multi".into(),
+            help_text: None,
+            kind: QuestionKind::MultiSelect {
+                options: vec![opt("a", "A"), opt("b", "B")],
+                default: Some(vec!["a".into(), "z".into()]),
+            },
+            required: false,
+            validation: vec![],
+            condition: None,
+        }]);
+        let errs = validate_questionnaire_schema(&q).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("'z'")));
     }
 
     #[test]

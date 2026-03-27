@@ -47,6 +47,7 @@ let ctx = AppBuilder::new()
     .with_data_dir("~/.config/my-app")      // persist auth + sessions to disk
     .register_provider(openai_registration())
     .register_tool(Arc::new(my_tool))
+    .with_skill_dir("/path/to/skills")      // recursively discovers SKILL.md files
     .build()?;
 
 let config = SessionBuilder::new("openai")
@@ -58,6 +59,9 @@ let (handle, tx, rx) = ctx.sessions
     .create_session(&provider_id, &auth_session, config)
     .await?;
 ```
+
+Registered skills are discovered recursively and their metadata is appended to
+new session system prompts, so the model can see which skills are available.
 
 ## Architecture
 

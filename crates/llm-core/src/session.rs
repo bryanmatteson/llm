@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::ids::{ModelId, ProviderId};
 use crate::limits::SessionLimits;
@@ -33,6 +34,15 @@ pub struct SessionConfig {
     /// Arbitrary key-value metadata attached to this session.
     #[serde(default)]
     pub metadata: Metadata,
+
+    /// Provider-native tool descriptors that should be sent alongside any
+    /// locally registered tools for this session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_tools: Vec<Value>,
+
+    /// Provider-native request fields merged into each turn request.
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub provider_request: Map<String, Value>,
 }
 
 impl SessionConfig {
@@ -46,6 +56,8 @@ impl SessionConfig {
             tool_policy: ToolPolicy::default(),
             limits: SessionLimits::default(),
             metadata: Metadata::default(),
+            provider_tools: Vec::new(),
+            provider_request: Map::new(),
         }
     }
 }

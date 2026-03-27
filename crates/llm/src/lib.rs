@@ -42,6 +42,9 @@ pub use llm_provider_api as provider_api;
 /// Session orchestration: turn loops, streaming, approval, events.
 pub use llm_session as session;
 
+/// Filesystem-based skill system: discovery, loading, registry.
+pub use llm_skill as skill;
+
 /// Application wiring: builder, services, provider registry.
 pub use llm_app as app;
 
@@ -82,10 +85,11 @@ pub use llm_gui_api as gui;
 
 pub use llm_core::{
     FrameworkError, Message, Metadata, ModelId, ProviderId, Result, SessionConfig, SessionId,
-    SessionLimits, StopReason, TokenUsage, ToolApproval, ToolId, ToolPolicy, ToolPolicyBuilder,
+    SessionLimits, SkillId, StopReason, TokenUsage, ToolApproval, ToolId, ToolPolicy,
+    ToolPolicyBuilder,
 };
 
-pub use llm_app::{AppBuilder, LlmContext};
+pub use llm_app::{AppBuilder, LlmContext, SkillService};
 pub use llm_auth::{
     AuthSession, CredentialKind, EnvCredentialDiscovery, ProviderCredential,
     build_auth_session as build_auth_session_from_credential,
@@ -96,5 +100,6 @@ pub use llm_session::{
     ConversationState, EventReceiver, EventSender, SessionEvent, SessionHandle, TurnLoopContext,
     TurnOutcome,
 };
+pub use llm_skill::{Skill, SkillMetadata, SkillRegistry};
 pub use llm_store::{CredentialStore, SessionStore};
 pub use llm_tools::{DynTool, FnTool, Tool, ToolDescriptor, ToolInfo, ToolRegistry};

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::metadata::Metadata;
 
@@ -43,7 +44,7 @@ impl Message {
         }
     }
 
-    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<String>) -> Self {
+    pub fn tool_result(tool_use_id: impl Into<String>, content: impl Into<Value>) -> Self {
         Self {
             role: Role::Tool,
             content: vec![ContentBlock::ToolResult {
@@ -76,7 +77,7 @@ pub enum ContentBlock {
     },
     ToolResult {
         tool_use_id: String,
-        content: String,
+        content: Value,
     },
 }
 
@@ -120,6 +121,7 @@ impl std::ops::Add for TokenUsage {
 pub enum StopReason {
     EndTurn,
     ToolUse,
+    PauseTurn,
     MaxTokens,
     Stop,
 }

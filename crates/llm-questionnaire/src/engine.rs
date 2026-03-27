@@ -163,6 +163,7 @@ mod tests {
                     .map(|v| ChoiceOption {
                         value: (*v).into(),
                         label: v.to_uppercase(),
+                        description: None,
                     })
                     .collect(),
                 default: default.map(|s| s.into()),
@@ -178,7 +179,10 @@ mod tests {
             id: QuestionId::new(id),
             label: id.into(),
             help_text: None,
-            kind: QuestionKind::Text { placeholder: None },
+            kind: QuestionKind::Text {
+                placeholder: None,
+                default: None,
+            },
             required: false,
             validation: vec![],
             condition: None,
@@ -382,13 +386,26 @@ mod tests {
 
     #[test]
     fn all_conditional_invisible_is_complete() {
-        let q = make_questionnaire(vec![{
-            let mut question = text_question("hidden");
-            question.condition = Some(ConditionExpr::Answered {
-                question_id: QuestionId::new("nonexistent"),
-            });
-            question
-        }]);
+        // "hidden" depends on "gate" being answered, but "gate" itself is
+        // also conditional (on an unanswered question), so neither is
+        // visible and the run is immediately complete.
+        let q = make_questionnaire(vec![
+            {
+                let mut gate = yes_no_question("gate", false);
+                gate.condition = Some(ConditionExpr::Equals {
+                    question_id: QuestionId::new("hidden"),
+                    value: serde_json::Value::String("trigger".into()),
+                });
+                gate
+            },
+            {
+                let mut question = text_question("hidden");
+                question.condition = Some(ConditionExpr::Answered {
+                    question_id: QuestionId::new("gate"),
+                });
+                question
+            },
+        ]);
         let run = QuestionnaireRun::new(q).unwrap();
         assert!(run.is_complete());
     }

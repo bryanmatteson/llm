@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio_stream::Stream;
 
+use serde_json::{Map, Value};
+
 use llm_core::{Message, ModelDescriptor, ModelId, ProviderId, Result, StopReason, TokenUsage};
 
 use crate::event::ProviderEvent;
@@ -13,7 +15,9 @@ pub struct TurnRequest {
     pub system_prompt: Option<String>,
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<serde_json::Value>,
+    pub tools: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Map::is_empty")]
+    pub provider_request: Map<String, Value>,
     pub model: Option<ModelId>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,

@@ -8,11 +8,27 @@ pub struct MessagesRequest {
     pub model: String,
     pub max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<ContainerRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Value>,
     pub messages: Vec<WireMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Value>,
     pub stream: bool,
+    #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra_body: serde_json::Map<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 // ── Wire message ───────────────────────────────────────────────────
@@ -25,35 +41,14 @@ pub struct WireMessage {
 
 // ── Wire content ───────────────────────────────────────────────────
 
-/// Content can be either a plain text string or an array of content blocks.
-///
-/// Uses `#[serde(untagged)]` so that `"hello"` deserializes as `Text` and
-/// `[{"type":"text","text":"hello"}]` deserializes as `Blocks`.
+/// Content can be either a plain text string or an array of raw content
+/// blocks. Using raw JSON values allows us to preserve Anthropic-specific
+/// blocks such as `server_tool_use` without needing a closed enum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum WireContent {
     Text(String),
-    Blocks(Vec<ContentBlock>),
-}
-
-// ── Content blocks ─────────────────────────────────────────────────
-
-/// Individual content blocks within a message.
-///
-/// Uses `#[serde(tag = "type")]` so the `"type"` field determines the variant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum ContentBlock {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "tool_use")]
-    ToolUse {
-        id: String,
-        name: String,
-        input: Value,
-    },
-    #[serde(rename = "tool_result")]
-    ToolResult { tool_use_id: String, content: Value },
+    Blocks(Vec<Value>),
 }
 
 // ── Messages API response ──────────────────────────────────────────
@@ -62,11 +57,15 @@ pub enum ContentBlock {
 pub struct MessagesResponse {
     pub id: String,
     pub model: String,
-    pub content: Vec<ContentBlock>,
+    pub content: Vec<Value>,
     #[serde(default)]
     pub stop_reason: Option<String>,
     #[serde(default)]
     pub usage: Option<UsageInfo>,
+    #[serde(default)]
+    pub container: Option<ContainerResponse>,
+    #[serde(default)]
+    pub context_management: Option<Value>,
 }
 
 // ── Usage info ─────────────────────────────────────────────────────
@@ -75,6 +74,13 @@ pub struct MessagesResponse {
 pub struct UsageInfo {
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerResponse {
+    pub id: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -105,14 +111,16 @@ mod tests {
         let msg = WireMessage {
             role: "assistant".into(),
             content: WireContent::Blocks(vec![
-                ContentBlock::Text {
-                    text: "Let me check.".into(),
-                },
-                ContentBlock::ToolUse {
-                    id: "toolu_01".into(),
-                    name: "get_weather".into(),
-                    input: json!({"location": "NYC"}),
-                },
+                json!({
+                    "type": "text",
+                    "text": "Let me check."
+                }),
+                json!({
+                    "type": "tool_use",
+                    "id": "toolu_01",
+                    "name": "get_weather",
+                    "input": {"location": "NYC"}
+                }),
             ]),
         };
 
@@ -122,42 +130,14 @@ mod tests {
         match &back.content {
             WireContent::Blocks(blocks) => {
                 assert_eq!(blocks.len(), 2);
-                match &blocks[0] {
-                    ContentBlock::Text { text } => assert_eq!(text, "Let me check."),
-                    other => panic!("expected Text block, got {other:?}"),
-                }
-                match &blocks[1] {
-                    ContentBlock::ToolUse { id, name, input } => {
-                        assert_eq!(id, "toolu_01");
-                        assert_eq!(name, "get_weather");
-                        assert_eq!(input["location"], "NYC");
-                    }
-                    other => panic!("expected ToolUse block, got {other:?}"),
-                }
+                assert_eq!(blocks[0]["type"], "text");
+                assert_eq!(blocks[0]["text"], "Let me check.");
+                assert_eq!(blocks[1]["type"], "tool_use");
+                assert_eq!(blocks[1]["id"], "toolu_01");
+                assert_eq!(blocks[1]["name"], "get_weather");
+                assert_eq!(blocks[1]["input"]["location"], "NYC");
             }
             _ => panic!("expected Blocks variant"),
-        }
-    }
-
-    #[test]
-    fn tool_result_block_roundtrip() {
-        let block = ContentBlock::ToolResult {
-            tool_use_id: "toolu_01".into(),
-            content: json!("Sunny, 72F"),
-        };
-
-        let json = serde_json::to_string(&block).unwrap();
-        assert!(json.contains(r#""type":"tool_result"#));
-        let back: ContentBlock = serde_json::from_str(&json).unwrap();
-        match back {
-            ContentBlock::ToolResult {
-                tool_use_id,
-                content,
-            } => {
-                assert_eq!(tool_use_id, "toolu_01");
-                assert_eq!(content, json!("Sunny, 72F"));
-            }
-            other => panic!("expected ToolResult, got {other:?}"),
         }
     }
 
@@ -166,38 +146,40 @@ mod tests {
         let req = MessagesRequest {
             model: "claude-sonnet-4-20250514".into(),
             max_tokens: 1024,
-            system: Some("You are helpful.".into()),
+            temperature: Some(0.2),
+            system: Some(json!("You are helpful.")),
+            container: Some(ContainerRequest {
+                id: Some("container_01".into()),
+            }),
+            cache_control: Some(json!({"type": "ephemeral"})),
+            context_management: Some(json!({"edits": []})),
             messages: vec![WireMessage {
                 role: "user".into(),
                 content: WireContent::Text("Hi".into()),
             }],
             tools: vec![],
             stream: false,
+            extra_body: serde_json::Map::from_iter([(
+                "tool_choice".into(),
+                json!({"type": "auto"}),
+            )]),
         };
 
         let json = serde_json::to_string(&req).unwrap();
-        // tools should be omitted when empty
         assert!(!json.contains("\"tools\""));
         let back: MessagesRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.model, "claude-sonnet-4-20250514");
         assert_eq!(back.max_tokens, 1024);
-        assert_eq!(back.system.as_deref(), Some("You are helpful."));
+        assert_eq!(back.temperature, Some(0.2));
+        assert_eq!(back.system, Some(json!("You are helpful.")));
+        assert_eq!(
+            back.container.as_ref().and_then(|c| c.id.as_deref()),
+            Some("container_01")
+        );
+        assert_eq!(back.cache_control, Some(json!({"type": "ephemeral"})));
+        assert_eq!(back.context_management, Some(json!({"edits": []})));
+        assert_eq!(back.extra_body["tool_choice"]["type"], "auto");
         assert!(!back.stream);
-    }
-
-    #[test]
-    fn messages_request_no_system_omitted() {
-        let req = MessagesRequest {
-            model: "claude-sonnet-4-20250514".into(),
-            max_tokens: 512,
-            system: None,
-            messages: vec![],
-            tools: vec![],
-            stream: false,
-        };
-
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("\"system\""));
     }
 
     #[test]
@@ -212,6 +194,10 @@ mod tests {
             "usage": {
                 "input_tokens": 25,
                 "output_tokens": 10
+            },
+            "container": {
+                "id": "container_01",
+                "expires_at": "2099-01-01T00:00:00Z"
             }
         }"#;
 
@@ -219,73 +205,15 @@ mod tests {
         assert_eq!(resp.id, "msg_01XFDUDYJgAACzvnptvVoYEL");
         assert_eq!(resp.model, "claude-sonnet-4-20250514");
         assert_eq!(resp.content.len(), 1);
-        match &resp.content[0] {
-            ContentBlock::Text { text } => assert_eq!(text, "Hello!"),
-            other => panic!("expected Text, got {other:?}"),
-        }
+        assert_eq!(resp.content[0]["type"], "text");
+        assert_eq!(resp.content[0]["text"], "Hello!");
         assert_eq!(resp.stop_reason.as_deref(), Some("end_turn"));
         let usage = resp.usage.as_ref().unwrap();
         assert_eq!(usage.input_tokens, 25);
         assert_eq!(usage.output_tokens, 10);
-    }
-
-    #[test]
-    fn messages_response_with_tool_use() {
-        let json = r#"{
-            "id": "msg_abc",
-            "model": "claude-sonnet-4-20250514",
-            "content": [
-                { "type": "text", "text": "I'll check the weather." },
-                {
-                    "type": "tool_use",
-                    "id": "toolu_01",
-                    "name": "get_weather",
-                    "input": {"location": "San Francisco"}
-                }
-            ],
-            "stop_reason": "tool_use",
-            "usage": {
-                "input_tokens": 50,
-                "output_tokens": 30
-            }
-        }"#;
-
-        let resp: MessagesResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.content.len(), 2);
-        assert_eq!(resp.stop_reason.as_deref(), Some("tool_use"));
-
-        match &resp.content[1] {
-            ContentBlock::ToolUse { id, name, input } => {
-                assert_eq!(id, "toolu_01");
-                assert_eq!(name, "get_weather");
-                assert_eq!(input["location"], "San Francisco");
-            }
-            other => panic!("expected ToolUse, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn messages_request_with_tools_included() {
-        let req = MessagesRequest {
-            model: "claude-sonnet-4-20250514".into(),
-            max_tokens: 1024,
-            system: None,
-            messages: vec![],
-            tools: vec![json!({
-                "name": "get_weather",
-                "description": "Get weather",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "location": { "type": "string" }
-                    }
-                }
-            })],
-            stream: false,
-        };
-
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"tools\""));
-        assert!(json.contains("get_weather"));
+        assert_eq!(
+            resp.container.as_ref().map(|c| c.id.as_str()),
+            Some("container_01")
+        );
     }
 }

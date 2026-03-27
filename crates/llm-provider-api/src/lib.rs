@@ -20,6 +20,7 @@ mod tests {
             system_prompt: Some("You are a helpful assistant.".to_string()),
             messages: vec![Message::user("Hello, world!")],
             tools: vec![],
+            provider_request: Default::default(),
             model: Some(ModelId::new("gpt-4o")),
             max_tokens: Some(1024),
             temperature: Some(0.7),

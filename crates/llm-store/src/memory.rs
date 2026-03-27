@@ -195,6 +195,8 @@ mod tests {
                 tool_policy: Default::default(),
                 limits: Default::default(),
                 metadata: Default::default(),
+                provider_tools: Vec::new(),
+                provider_request: Default::default(),
             },
             messages: vec![Message::user("hello")],
             created_at: Utc::now(),

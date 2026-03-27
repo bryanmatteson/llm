@@ -63,6 +63,8 @@ async fn new_session(provider: &str, model: Option<String>, ctx: &AppContext) ->
         tool_policy: Default::default(),
         limits: Default::default(),
         metadata: Default::default(),
+        provider_tools: Vec::new(),
+        provider_request: Default::default(),
     };
 
     let handle = ctx.session_manager.create_session(config).await?;
@@ -93,6 +95,8 @@ async fn chat(session_id: Option<String>, ctx: &AppContext) -> Result<()> {
             tool_policy: Default::default(),
             limits: Default::default(),
             metadata: Default::default(),
+            provider_tools: Vec::new(),
+            provider_request: Default::default(),
         };
         let h = ctx.session_manager.create_session(config).await?;
         eprintln!("Created session: {}", h.id);

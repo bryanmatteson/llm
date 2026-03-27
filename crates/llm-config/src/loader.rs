@@ -15,7 +15,10 @@ impl ConfigLoader {
     /// Load an [`AppConfig`] from a KDL file at `path`.
     pub fn load_from_file(path: &Path) -> Result<LlmConfig> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
-            FrameworkError::config(format!("failed to read config file {}: {e}", path.display()))
+            FrameworkError::config(format!(
+                "failed to read config file {}: {e}",
+                path.display()
+            ))
         })?;
         Self::parse(&contents)
     }

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 macro_rules! define_id {
@@ -70,6 +71,18 @@ macro_rules! define_id {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let s = String::deserialize(deserializer)?;
                 Ok(Self(s.into()))
+            }
+        }
+
+        impl JsonSchema for $name {
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                std::borrow::Cow::Borrowed(stringify!($name))
+            }
+
+            fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+                schemars::json_schema!({
+                    "type": "string"
+                })
             }
         }
     };

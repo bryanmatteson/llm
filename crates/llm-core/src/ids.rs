@@ -87,6 +87,7 @@ define_id!(SessionId);
 define_id!(ToolId);
 define_id!(QuestionnaireId);
 define_id!(QuestionId);
+define_id!(SkillId);
 
 #[cfg(test)]
 mod tests {

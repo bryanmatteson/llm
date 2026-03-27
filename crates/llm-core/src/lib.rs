@@ -10,7 +10,7 @@ pub mod session;
 
 pub use capabilities::{ModelCapability, ProviderCapability};
 pub use error::{FrameworkError, Result};
-pub use ids::{ModelId, ProviderId, QuestionId, QuestionnaireId, SessionId, ToolId};
+pub use ids::{ModelId, ProviderId, QuestionId, QuestionnaireId, SessionId, SkillId, ToolId};
 pub use limits::SessionLimits;
 pub use message::{ContentBlock, Message, Role, StopReason, TokenUsage};
 pub use metadata::Metadata;

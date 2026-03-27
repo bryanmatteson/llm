@@ -103,6 +103,11 @@ impl AnswerMap {
         self.answers.get(id).and_then(AnswerValue::as_number)
     }
 
+    /// Convenience: get a multi-select slice.
+    pub fn multi_select(&self, id: &QuestionId) -> Option<&[String]> {
+        self.answers.get(id).and_then(AnswerValue::as_multi_select)
+    }
+
     /// Returns true if an answer exists for the given question id.
     pub fn contains(&self, id: &QuestionId) -> bool {
         self.answers.contains_key(id)
