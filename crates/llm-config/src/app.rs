@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use kdl_config::KdlNode;
+use kdl_config::Kdl;
 use llm_core::ProviderId;
 use serde::{Deserialize, Serialize};
 
@@ -8,9 +8,10 @@ use crate::provider::ProviderConfig;
 use crate::session::SessionDefaults;
 use crate::tool::ToolPolicyConfig;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, KdlNode)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Kdl)]
 #[kdl(
     node = "llm",
+    schema,
     rename_all = "kebab-case",
     deny_unknown,
     skip_serialize_none,

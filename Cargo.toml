@@ -1,24 +1,6 @@
 [workspace]
     resolver = "2"
-    members = [
-        "crates/llm-core",
-        "crates/llm-auth",
-        "crates/llm-tools",
-        "crates/llm-questionnaire",
-        "crates/llm-config",
-        "crates/llm-store",
-        "crates/llm-provider-api",
-        "crates/llm-session",
-        "crates/llm-provider-openai",
-        "crates/llm-provider-anthropic",
-        "crates/llm-provider-google",
-        "crates/llm-app",
-        "crates/llm-skill",
-        "crates/llm-mcp",
-        "crates/llm-cli",
-        "crates/llm-gui-api",
-        "crates/llm",
-    ]
+    members  = ["crates/*"]
 
 [workspace.package]
     version      = "0.1.0"
@@ -58,7 +40,7 @@
     thiserror    = "2"
     tokio        = { version = "1", features = ["full"] }
     tokio-stream = "0.1"
-    kdl-config   = { git = "https://github.com/bryanmatteson/kdl-config.git" }
+    kdl-config   = { git = "https://github.com/bryanmatteson/kdl-config.git", tag = "v0.1.1" }
     regex-lite   = "0.1"
     schemars     = "1"
     url          = "2"
