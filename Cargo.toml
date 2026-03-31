@@ -40,7 +40,7 @@
     thiserror    = "2"
     tokio        = { version = "1", features = ["full"] }
     tokio-stream = "0.1"
-    kdl-config   = { git = "https://github.com/bryanmatteson/kdl-config.git", tag = "v0.1.1" }
+    kdl-config   = { git = "https://github.com/bryanmatteson/kdl-config.git", tag = "v0.1.4" }
     regex-lite   = "0.1"
     schemars     = "1"
     url          = "2"

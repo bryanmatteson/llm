@@ -812,8 +812,8 @@ dependencies = [
 
 [[package]]
 name = "kdl-config"
-version = "0.1.0"
-source = "git+https://github.com/bryanmatteson/kdl-config.git?tag=v0.1.1#e2abf054cc79ccce1476722cdf0840b0136c5fab"
+version = "0.1.4"
+source = "git+https://github.com/bryanmatteson/kdl-config.git?tag=v0.1.4#e0b34d8b1a7d6d0a6168718808df4d9baa88e061"
 dependencies = [
  "kdl",
  "kdl-config-derive",
@@ -823,8 +823,8 @@ dependencies = [
 
 [[package]]
 name = "kdl-config-derive"
-version = "0.1.0"
-source = "git+https://github.com/bryanmatteson/kdl-config.git?tag=v0.1.1#e2abf054cc79ccce1476722cdf0840b0136c5fab"
+version = "0.1.4"
+source = "git+https://github.com/bryanmatteson/kdl-config.git?tag=v0.1.4#e0b34d8b1a7d6d0a6168718808df4d9baa88e061"
 dependencies = [
  "proc-macro2",
  "quote",
