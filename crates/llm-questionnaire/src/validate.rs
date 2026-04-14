@@ -65,6 +65,9 @@ pub fn validate_answer(
                 }
             }
         }
+        (QuestionKind::Info { .. }, _) => {
+            errors.push("info items do not accept answers".to_string());
+        }
         _ => {
             errors.push(format!(
                 "answer type does not match question kind: expected {:?}",
@@ -154,7 +157,8 @@ fn collect_condition_refs(cond: &crate::condition::ConditionExpr) -> Vec<&crate:
 /// Validate the overall structure of a questionnaire definition.
 ///
 /// Checks:
-/// - No duplicate question IDs
+/// - No duplicate question IDs (across all sections)
+/// - No duplicate section IDs
 /// - No empty question IDs or labels
 /// - Choice defaults (if present) exist in the options list
 /// - Choice options have unique values
@@ -163,6 +167,16 @@ fn collect_condition_refs(cond: &crate::condition::ConditionExpr) -> Vec<&crate:
 pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
     let mut seen_ids = HashSet::new();
+
+    // Validate section ID uniqueness.
+    let mut seen_section_ids = HashSet::new();
+    for section in &questionnaire.sections {
+        let sid = section.id.as_str();
+        // Allow empty section IDs (implicit default sections).
+        if !sid.is_empty() && !seen_section_ids.insert(sid.to_string()) {
+            errors.push(format!("duplicate section id '{sid}'"));
+        }
+    }
 
     // Collect all question IDs first for condition reference validation.
     let all_ids: HashSet<&str> = questionnaire
@@ -277,7 +291,7 @@ pub fn validate_questionnaire_schema(questionnaire: &Questionnaire) -> Result<()
                     }
                 }
             }
-            QuestionKind::YesNo { .. } | QuestionKind::Text { .. } => {}
+            QuestionKind::YesNo { .. } | QuestionKind::Text { .. } | QuestionKind::Info { .. } => {}
         }
     }
 
@@ -303,6 +317,7 @@ fn kind_name(kind: &QuestionKind) -> &'static str {
         QuestionKind::Text { .. } => "Text",
         QuestionKind::Number { .. } => "Number",
         QuestionKind::MultiSelect { .. } => "MultiSelect",
+        QuestionKind::Info { .. } => "Info",
     }
 }
 
@@ -547,6 +562,7 @@ mod tests {
             id: QuestionnaireId::new("test"),
             title: "Test".into(),
             description: "A test questionnaire".into(),
+            sections: vec![],
             questions,
         }
     }

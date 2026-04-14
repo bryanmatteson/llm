@@ -145,6 +145,7 @@ impl AskQuestionsInput {
             id: QuestionnaireId::new("ask_questions"),
             title: String::new(),
             description: String::new(),
+            sections: vec![],
             questions,
         };
 

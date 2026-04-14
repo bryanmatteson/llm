@@ -59,6 +59,7 @@ fn example_questionnaire(id: &str) -> Result<Questionnaire> {
             id: QuestionnaireId::new("setup"),
             title: "Provider Setup".into(),
             description: "Configure your LLM provider settings.".into(),
+            sections: vec![],
             questions: vec![
                 Question {
                     id: QuestionId::new("provider"),

@@ -1,17 +1,38 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{QuestionId, QuestionnaireId};
+use crate::ids::{QuestionId, QuestionnaireId, SectionId};
 
 use crate::condition::ConditionExpr;
 use crate::validate::ValidationRule;
 
+/// A named group of questions within a questionnaire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Section {
+    pub id: SectionId,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub questions: Vec<Question>,
+}
+
 /// A complete questionnaire definition.
+///
+/// Questions are organized into [`Section`]s. The flat [`questions`](Questionnaire::questions)
+/// field contains all questions across all sections (in section order) for
+/// backward compatibility and index-based engine access.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Questionnaire {
     pub id: QuestionnaireId,
     pub title: String,
     pub description: String,
+    /// Sectioned grouping of questions. Each section has a title and its own
+    /// questions. When empty, all questions live in the flat `questions` vec
+    /// (backward-compatible mode).
+    #[serde(default)]
+    pub sections: Vec<Section>,
+    /// Flat view of all questions (union of all sections' questions, in order).
+    /// Maintained for backward compatibility — the engine indexes into this.
     pub questions: Vec<Question>,
 }
 
@@ -52,6 +73,11 @@ pub enum QuestionKind {
         options: Vec<ChoiceOption>,
         default: Option<Vec<String>>,
     },
+    /// A read-only informational block displayed to the user.
+    /// Not collected in the answer map — purely for display.
+    Info {
+        content: String,
+    },
 }
 
 /// A selectable option within a Choice or MultiSelect question.
@@ -64,13 +90,58 @@ pub struct ChoiceOption {
 }
 
 impl Questionnaire {
+    /// Build a questionnaire from sections, populating the flat `questions`
+    /// vec automatically.
+    pub fn from_sections(
+        id: QuestionnaireId,
+        title: String,
+        description: String,
+        sections: Vec<Section>,
+    ) -> Self {
+        let questions = sections.iter().flat_map(|s| s.questions.clone()).collect();
+        Self {
+            id,
+            title,
+            description,
+            sections,
+            questions,
+        }
+    }
+
+    /// Returns the section that contains the question at the given flat index,
+    /// or `None` if sections are empty.
+    pub fn section_of_index(&self, flat_index: usize) -> Option<&Section> {
+        let mut offset = 0;
+        for section in &self.sections {
+            let end = offset + section.questions.len();
+            if flat_index < end {
+                return Some(section);
+            }
+            offset = end;
+        }
+        None
+    }
+
     /// Deserialize from a JSON value and validate the schema.
     ///
     /// This is the primary entry point for constructing a questionnaire
     /// dynamically — e.g. from an LLM tool call's JSON arguments.
+    ///
+    /// Handles both old format (flat `questions` only) and new format
+    /// (with `sections`). When sections are empty, questions are wrapped
+    /// in an implicit default section.
     pub fn from_value(value: serde_json::Value) -> Result<Self, Vec<String>> {
-        let q: Self = serde_json::from_value(value)
+        let mut q: Self = serde_json::from_value(value)
             .map_err(|e| vec![format!("invalid questionnaire JSON: {e}")])?;
+        // If sections are empty but questions exist, wrap in a default section.
+        if q.sections.is_empty() && !q.questions.is_empty() {
+            q.sections = vec![Section {
+                id: SectionId::new(""),
+                title: String::new(),
+                description: String::new(),
+                questions: q.questions.clone(),
+            }];
+        }
         crate::validate::validate_questionnaire_schema(&q)?;
         Ok(q)
     }
@@ -82,46 +153,48 @@ mod tests {
 
     #[test]
     fn questionnaire_serde_roundtrip() {
+        let questions = vec![
+            Question {
+                id: QuestionId::new("lang"),
+                label: "Language".into(),
+                help_text: Some("Pick your language".into()),
+                kind: QuestionKind::Choice {
+                    options: vec![
+                        ChoiceOption {
+                            value: "en".into(),
+                            label: "English".into(),
+                            description: None,
+                        },
+                        ChoiceOption {
+                            value: "es".into(),
+                            label: "Spanish".into(),
+                            description: None,
+                        },
+                    ],
+                    default: Some("en".into()),
+                },
+                required: true,
+                validation: vec![],
+                condition: None,
+            },
+            Question {
+                id: QuestionId::new("agree"),
+                label: "Do you agree?".into(),
+                help_text: None,
+                kind: QuestionKind::YesNo {
+                    default: Some(true),
+                },
+                required: true,
+                validation: vec![],
+                condition: None,
+            },
+        ];
         let q = Questionnaire {
             id: QuestionnaireId::new("setup"),
             title: "Setup".into(),
             description: "Initial setup".into(),
-            questions: vec![
-                Question {
-                    id: QuestionId::new("lang"),
-                    label: "Language".into(),
-                    help_text: Some("Pick your language".into()),
-                    kind: QuestionKind::Choice {
-                        options: vec![
-                            ChoiceOption {
-                                value: "en".into(),
-                                label: "English".into(),
-                                description: None,
-                            },
-                            ChoiceOption {
-                                value: "es".into(),
-                                label: "Spanish".into(),
-                                description: None,
-                            },
-                        ],
-                        default: Some("en".into()),
-                    },
-                    required: true,
-                    validation: vec![],
-                    condition: None,
-                },
-                Question {
-                    id: QuestionId::new("agree"),
-                    label: "Do you agree?".into(),
-                    help_text: None,
-                    kind: QuestionKind::YesNo {
-                        default: Some(true),
-                    },
-                    required: true,
-                    validation: vec![],
-                    condition: None,
-                },
-            ],
+            sections: vec![],
+            questions,
         };
 
         let json = serde_json::to_string_pretty(&q).unwrap();
@@ -154,6 +227,9 @@ mod tests {
                     description: None,
                 }],
                 default: None,
+            },
+            QuestionKind::Info {
+                content: "preview text".into(),
             },
         ];
 

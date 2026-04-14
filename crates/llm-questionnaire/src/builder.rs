@@ -20,8 +20,8 @@
 //! ```
 
 use crate::condition::ConditionExpr;
-use crate::ids::{QuestionId, QuestionnaireId};
-use crate::schema::{ChoiceOption, Question, QuestionKind, Questionnaire};
+use crate::ids::{QuestionId, QuestionnaireId, SectionId};
+use crate::schema::{ChoiceOption, Question, QuestionKind, Questionnaire, Section};
 use crate::validate::ValidationRule;
 
 // ---------------------------------------------------------------------------
@@ -42,7 +42,10 @@ pub struct QuestionnaireBuilder {
     id: QuestionnaireId,
     title: String,
     description: String,
-    questions: Vec<Question>,
+    /// Questions added without a section (backward-compat flat mode).
+    loose_questions: Vec<Question>,
+    /// Explicitly defined sections.
+    sections: Vec<Section>,
 }
 
 impl QuestionnaireBuilder {
@@ -52,7 +55,8 @@ impl QuestionnaireBuilder {
             id: QuestionnaireId::new(id.into()),
             title: title.into(),
             description: String::new(),
-            questions: Vec::new(),
+            loose_questions: Vec::new(),
+            sections: Vec::new(),
         }
     }
 
@@ -71,7 +75,7 @@ impl QuestionnaireBuilder {
         label: impl Into<String>,
         configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
     ) -> Self {
-        self.questions
+        self.loose_questions
             .push(configure(QuestionConfig::new(id, label, kind)).into_question());
         self
     }
@@ -278,15 +282,330 @@ impl QuestionnaireBuilder {
 
     // -- raw -----------------------------------------------------------------
 
+    /// Push a fully-built [`Question`] directly (into the loose/flat list).
+    pub fn question(mut self, question: Question) -> Self {
+        self.loose_questions.push(question);
+        self
+    }
+
+    /// Add an explicit section. Questions added via the closure belong to this section.
+    pub fn section(
+        mut self,
+        id: impl Into<String>,
+        title: impl Into<String>,
+        configure: impl FnOnce(SectionBuilder) -> SectionBuilder,
+    ) -> Self {
+        let builder = SectionBuilder::new(id, title);
+        self.sections.push(configure(builder).build());
+        self
+    }
+
+    /// Push a pre-built [`Section`] directly.
+    pub fn push_section(mut self, section: Section) -> Self {
+        self.sections.push(section);
+        self
+    }
+
+    /// Finish building and return the [`Questionnaire`].
+    ///
+    /// If sections were added, loose questions (added via flat `.choice()` etc.)
+    /// are placed into an implicit default section at the front. If no sections
+    /// were added, all questions go into a single implicit section.
+    pub fn build(self) -> Questionnaire {
+        let mut sections = Vec::new();
+
+        // Wrap loose questions in an implicit default section.
+        if !self.loose_questions.is_empty() {
+            sections.push(Section {
+                id: SectionId::new(""),
+                title: String::new(),
+                description: String::new(),
+                questions: self.loose_questions,
+            });
+        }
+
+        sections.extend(self.sections);
+
+        // Flatten all questions for backward-compat engine access.
+        let questions: Vec<Question> = sections
+            .iter()
+            .flat_map(|s| s.questions.clone())
+            .collect();
+
+        Questionnaire {
+            id: self.id,
+            title: self.title,
+            description: self.description,
+            sections,
+            questions,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SectionBuilder
+// ---------------------------------------------------------------------------
+
+/// Builder for a [`Section`] within a questionnaire.
+///
+/// Created by [`QuestionnaireBuilder::section()`]. Supports the same
+/// question-adding methods as `QuestionnaireBuilder`, plus an `info()` method
+/// for read-only display blocks.
+pub struct SectionBuilder {
+    id: SectionId,
+    title: String,
+    description: String,
+    questions: Vec<Question>,
+}
+
+impl SectionBuilder {
+    fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            id: SectionId::new(id.into()),
+            title: title.into(),
+            description: String::new(),
+            questions: Vec::new(),
+        }
+    }
+
+    /// Set the section description.
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = desc.into();
+        self
+    }
+
+    fn push(
+        mut self,
+        kind: QuestionKind,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        self.questions
+            .push(configure(QuestionConfig::new(id, label, kind)).into_question());
+        self
+    }
+
+    /// Add a read-only informational block (not collected in answers).
+    pub fn info(
+        mut self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        self.questions.push(Question {
+            id: QuestionId::new(id.into()),
+            label: label.into(),
+            help_text: None,
+            kind: QuestionKind::Info {
+                content: content.into(),
+            },
+            required: false,
+            validation: vec![],
+            condition: None,
+        });
+        self
+    }
+
+    // -- choice --------------------------------------------------------------
+
+    pub fn choice(self, id: impl Into<String>, label: impl Into<String>, options: &[&str]) -> Self {
+        self.push(Self::choice_kind(options), id, label, |q| q)
+    }
+
+    pub fn choice_with(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        options: &[&str],
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        self.push(Self::choice_kind(options), id, label, configure)
+    }
+
+    pub fn choice_labeled(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        options: &[(&str, &str)],
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        let opts = options
+            .iter()
+            .map(|(v, l)| ChoiceOption {
+                value: (*v).into(),
+                label: (*l).into(),
+                description: None,
+            })
+            .collect();
+        self.push(
+            QuestionKind::Choice {
+                options: opts,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
+    }
+
+    fn choice_kind(options: &[&str]) -> QuestionKind {
+        let opts = options
+            .iter()
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+                description: None,
+            })
+            .collect();
+        QuestionKind::Choice {
+            options: opts,
+            default: None,
+        }
+    }
+
+    // -- yes/no --------------------------------------------------------------
+
+    pub fn yes_no(self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.push(QuestionKind::YesNo { default: None }, id, label, |q| q)
+    }
+
+    pub fn yes_no_with(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        self.push(QuestionKind::YesNo { default: None }, id, label, configure)
+    }
+
+    // -- text ----------------------------------------------------------------
+
+    pub fn text(self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.push(
+            QuestionKind::Text {
+                placeholder: None,
+                default: None,
+            },
+            id,
+            label,
+            |q| q,
+        )
+    }
+
+    pub fn text_with(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        self.push(
+            QuestionKind::Text {
+                placeholder: None,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
+    }
+
+    // -- number --------------------------------------------------------------
+
+    pub fn number(self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.push(
+            QuestionKind::Number {
+                min: None,
+                max: None,
+                default: None,
+            },
+            id,
+            label,
+            |q| q,
+        )
+    }
+
+    pub fn number_with(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        self.push(
+            QuestionKind::Number {
+                min: None,
+                max: None,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
+    }
+
+    // -- multi-select --------------------------------------------------------
+
+    pub fn multi_select(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        options: &[&str],
+    ) -> Self {
+        let opts = options
+            .iter()
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+                description: None,
+            })
+            .collect();
+        self.push(
+            QuestionKind::MultiSelect {
+                options: opts,
+                default: None,
+            },
+            id,
+            label,
+            |q| q,
+        )
+    }
+
+    pub fn multi_select_with(
+        self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        options: &[&str],
+        configure: impl FnOnce(QuestionConfig) -> QuestionConfig,
+    ) -> Self {
+        let opts = options
+            .iter()
+            .map(|v| ChoiceOption {
+                value: (*v).into(),
+                label: (*v).into(),
+                description: None,
+            })
+            .collect();
+        self.push(
+            QuestionKind::MultiSelect {
+                options: opts,
+                default: None,
+            },
+            id,
+            label,
+            configure,
+        )
+    }
+
+    // -- raw -----------------------------------------------------------------
+
     /// Push a fully-built [`Question`] directly.
     pub fn question(mut self, question: Question) -> Self {
         self.questions.push(question);
         self
     }
 
-    /// Finish building and return the [`Questionnaire`].
-    pub fn build(self) -> Questionnaire {
-        Questionnaire {
+    fn build(self) -> Section {
+        Section {
             id: self.id,
             title: self.title,
             description: self.description,

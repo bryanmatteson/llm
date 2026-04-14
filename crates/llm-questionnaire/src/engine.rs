@@ -1,5 +1,5 @@
 use crate::answer::{AnswerMap, AnswerValue};
-use crate::schema::{Question, Questionnaire};
+use crate::schema::{Question, QuestionKind, Questionnaire, Section};
 use crate::validate::{validate_answer, validate_questionnaire_schema};
 
 /// Drives a single run through a [`Questionnaire`], tracking the current
@@ -83,9 +83,29 @@ impl QuestionnaireRun {
         Ok(())
     }
 
+    /// Advance past an info item without collecting an answer.
+    ///
+    /// Returns `Err` if the current visible question is not an info item.
+    pub fn advance_info(&mut self) -> Result<(), Vec<String>> {
+        let question = match self.resolve_current_question() {
+            Some(q) => q,
+            None => return Err(vec!["no current question to advance".into()]),
+        };
+        if !matches!(question.kind, QuestionKind::Info { .. }) {
+            return Err(vec!["current question is not an info item".into()]);
+        }
+        self.advance_past_current();
+        Ok(())
+    }
+
     /// The accumulated answers so far.
     pub fn answers(&self) -> &AnswerMap {
         &self.answers
+    }
+
+    /// Consume the run and return the final answers.
+    pub fn into_answers(self) -> AnswerMap {
+        self.answers
     }
 
     /// True when every visible question has been answered.
@@ -96,6 +116,13 @@ impl QuestionnaireRun {
     /// The raw index into the questions vec (exposed for diagnostics).
     pub fn current_index(&self) -> usize {
         self.current_index
+    }
+
+    /// Returns the section that contains the current question, or `None` if
+    /// sections are not defined or the questionnaire is complete.
+    pub fn current_section(&self) -> Option<&Section> {
+        self.resolve_current_visible_index()
+            .and_then(|idx| self.questionnaire.section_of_index(idx))
     }
 
     // --- internal helpers ---
@@ -194,6 +221,7 @@ mod tests {
             id: QuestionnaireId::new("test"),
             title: "Test".into(),
             description: "desc".into(),
+            sections: vec![],
             questions,
         }
     }
@@ -334,6 +362,7 @@ mod tests {
             id: QuestionnaireId::new("bad"),
             title: "Bad".into(),
             description: "desc".into(),
+            sections: vec![],
             questions: vec![
                 choice_question("dup", &["a"], None),
                 choice_question("dup", &["b"], None),

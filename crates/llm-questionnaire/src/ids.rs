@@ -90,3 +90,4 @@ macro_rules! define_id {
 
 define_id!(QuestionId);
 define_id!(QuestionnaireId);
+define_id!(SectionId);

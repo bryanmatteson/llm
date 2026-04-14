@@ -1,7 +1,9 @@
 use std::io::{self, BufRead, Write};
 
 use llm_core::Result;
-use llm_questionnaire::{AnswerMap, AnswerValue, QuestionKind, Questionnaire, QuestionnaireRun};
+use llm_questionnaire::{
+    AnswerMap, AnswerValue, QuestionKind, Questionnaire, QuestionnaireRun, SectionId,
+};
 
 /// Drive a [`Questionnaire`] interactively on the terminal, returning the
 /// collected answers.
@@ -12,7 +14,41 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
+    // Track the last section we printed a header for.
+    let mut last_section_id: Option<SectionId> = None;
+
     while let Some(question) = run.next_question() {
+        // Print section header if we've entered a new section.
+        if let Some(section) = run.current_section() {
+            let sid = &section.id;
+            let is_new_section = last_section_id.as_ref() != Some(sid);
+            if is_new_section && !section.title.is_empty() {
+                eprintln!();
+                eprintln!("── {} ──", section.title);
+                if !section.description.is_empty() {
+                    eprintln!("{}", section.description);
+                }
+                eprintln!();
+                last_section_id = Some(sid.clone());
+            } else if is_new_section {
+                last_section_id = Some(sid.clone());
+            }
+        }
+
+        // Handle info items: display and advance without prompting.
+        if let QuestionKind::Info { content } = &question.kind {
+            if !question.label.is_empty() {
+                eprintln!("  {}", question.label);
+            }
+            for line in content.lines() {
+                eprintln!("    {line}");
+            }
+            eprintln!();
+            run.advance_info()
+                .map_err(|errs| llm_core::FrameworkError::questionnaire(errs.join("; ")))?;
+            continue;
+        }
+
         // Display the question.
         if let Some(help) = &question.help_text {
             eprintln!("  ({help})");
@@ -40,6 +76,7 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
             QuestionKind::MultiSelect { options, default } => {
                 prompt_multi_select(&question.label, options, default.as_deref(), &mut reader)?
             }
+            QuestionKind::Info { .. } => unreachable!("handled above"),
         };
 
         match run.submit_answer(answer) {
