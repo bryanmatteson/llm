@@ -52,7 +52,6 @@ const STRUCTURED_OUTPUTS_BETA: &str = "structured-outputs-2025-12-15";
 const FAST_MODE_BETA: &str = "fast-mode-2026-02-01";
 const REDACT_THINKING_BETA: &str = "redact-thinking-2026-02-12";
 const TOKEN_EFFICIENT_TOOLS_BETA: &str = "token-efficient-tools-2026-03-28";
-const CLAUDE_CLI_USER_AGENT: &str = "claude-cli/2.1.63 (external, cli)";
 const CLAUDE_STAINLESS_PACKAGE_VERSION: &str = "0.74.0";
 const CLAUDE_STAINLESS_RUNTIME_VERSION: &str = "v24.3.0";
 const CLAUDE_VERSION: &str = "2.1.63";
@@ -238,10 +237,39 @@ impl AnthropicClient {
         )
     }
 
-    fn apply_oauth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        builder
+    fn claude_cli_user_agent() -> String {
+        let agent_sdk_version = std::env::var("CLAUDE_AGENT_SDK_VERSION")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!(", agent-sdk/{value}"))
+            .unwrap_or_default();
+        let client_app_suffix = std::env::var("CLAUDE_AGENT_SDK_CLIENT_APP")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!(", client-app/{value}"))
+            .unwrap_or_default();
+        let workload_suffix = std::env::var("CLAUDE_CODE_WORKLOAD")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| format!(", workload/{value}"))
+            .unwrap_or_default();
+        let user_type = std::env::var("USER_TYPE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "external".to_string());
+        let entrypoint = std::env::var("CLAUDE_CODE_ENTRYPOINT")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "cli".to_string());
+        format!(
+            "claude-cli/{CLAUDE_VERSION} ({user_type}, {entrypoint}{agent_sdk_version}{client_app_suffix}{workload_suffix})"
+        )
+    }
+
+    fn apply_claude_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let builder = builder
             .header("x-app", "cli")
-            .header("user-agent", CLAUDE_CLI_USER_AGENT)
+            .header("user-agent", Self::claude_cli_user_agent())
             .header("x-claude-code-session-id", &self.session_id)
             .header("x-client-request-id", self.request_id())
             .header("x-stainless-retry-count", "0")
@@ -258,7 +286,46 @@ impl AnthropicClient {
             )
             .header("x-stainless-os", Self::stainless_os())
             .header("x-stainless-arch", Self::stainless_arch())
-            .header("Connection", "keep-alive")
+            .header("Connection", "keep-alive");
+
+        let builder = if let Ok(container_id) = std::env::var("CLAUDE_CODE_CONTAINER_ID") {
+            if container_id.trim().is_empty() {
+                builder
+            } else {
+                builder.header("x-claude-remote-container-id", container_id)
+            }
+        } else {
+            builder
+        };
+        let builder = if let Ok(remote_session_id) = std::env::var("CLAUDE_CODE_REMOTE_SESSION_ID")
+        {
+            if remote_session_id.trim().is_empty() {
+                builder
+            } else {
+                builder.header("x-claude-remote-session-id", remote_session_id)
+            }
+        } else {
+            builder
+        };
+        let builder = if let Ok(client_app) = std::env::var("CLAUDE_AGENT_SDK_CLIENT_APP") {
+            if client_app.trim().is_empty() {
+                builder
+            } else {
+                builder.header("x-client-app", client_app)
+            }
+        } else {
+            builder
+        };
+        if matches!(
+            std::env::var("CLAUDE_CODE_ADDITIONAL_PROTECTION")
+                .ok()
+                .as_deref(),
+            Some("1" | "true" | "TRUE" | "True" | "yes" | "YES" | "Yes")
+        ) {
+            builder.header("x-anthropic-additional-protection", "true")
+        } else {
+            builder
+        }
     }
 
     fn apply_request_headers(
@@ -287,13 +354,12 @@ impl AnthropicClient {
                 .header("Accept-Encoding", "gzip, deflate, br, zstd")
         };
         let builder = self.apply_auth(builder);
+        let builder = self.apply_claude_headers(builder);
         if matches!(
             self.auth_session.method,
             llm_auth::AuthMethod::ApiKey { .. }
         ) {
             builder.header("anthropic-dangerous-direct-browser-access", "true")
-        } else if self.is_oauth_like() {
-            self.apply_oauth_headers(builder)
         } else {
             builder
         }
@@ -886,11 +952,39 @@ impl AnthropicClient {
             .get("user_id")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if Self::is_valid_fake_user_id(existing) {
+        if Self::is_valid_fake_user_id(existing)
+            || Self::is_valid_claude_code_metadata_user_id(existing)
+        {
             return;
         }
 
         metadata.insert("user_id".into(), Value::String(Self::fake_user_id(seed)));
+    }
+
+    fn is_valid_claude_code_metadata_user_id(value: &str) -> bool {
+        let Ok(parsed) = serde_json::from_str::<Value>(value) else {
+            return false;
+        };
+        let Some(object) = parsed.as_object() else {
+            return false;
+        };
+        let device_id = object
+            .get("device_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let account_uuid = object
+            .get("account_uuid")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let session_id = object
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        device_id.len() == 64
+            && device_id.chars().all(|ch| ch.is_ascii_hexdigit())
+            && (account_uuid.is_empty() || Self::is_uuid_like(account_uuid))
+            && Self::is_uuid_like(session_id)
     }
 
     fn fake_user_id(seed: &str) -> String {
@@ -2394,6 +2488,78 @@ mod tests {
     }
 
     #[test]
+    fn api_key_requests_still_use_claude_header_shape() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::ApiKey {
+                masked: "sk-ant-****".into(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+        let prepared = client.prepare_body(&body);
+        let request = TurnRequest {
+            system_prompt: None,
+            messages: vec![Message::user("hi")],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: None,
+            max_tokens: None,
+            temperature: None,
+        };
+        let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
+        let built = client
+            .apply_request_headers(
+                http.post(client.request_url()),
+                &request,
+                &prepared.extra_betas,
+                false,
+            )
+            .build()
+            .expect("request build");
+        let headers = request_headers_map(&built);
+
+        assert_eq!(headers.get("x-app").map(String::as_str), Some("cli"));
+        assert_eq!(
+            headers.get("user-agent").map(String::as_str),
+            Some("claude-cli/2.1.63 (external, cli)")
+        );
+        assert_eq!(
+            headers.get("x-stainless-runtime").map(String::as_str),
+            Some("node")
+        );
+        assert_eq!(
+            headers
+                .get("x-stainless-package-version")
+                .map(String::as_str),
+            Some(CLAUDE_STAINLESS_PACKAGE_VERSION)
+        );
+        assert!(headers.contains_key("x-client-request-id"));
+        assert!(headers.contains_key("x-claude-code-session-id"));
+        assert_eq!(
+            headers
+                .get("anthropic-dangerous-direct-browser-access")
+                .map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
     fn message_to_wire_user() {
         let msg = Message::user("Hello!");
         let wire = AnthropicClient::message_to_wire(&msg);
@@ -2811,6 +2977,24 @@ mod tests {
     #[test]
     fn inject_fake_user_id_preserves_existing_valid_value() {
         let existing = AnthropicClient::fake_user_id("existing-seed");
+        let mut payload = json!({
+            "metadata": {
+                "user_id": existing.clone()
+            }
+        });
+
+        AnthropicClient::inject_fake_user_id(&mut payload, "new-seed");
+        assert_eq!(payload["metadata"]["user_id"], existing);
+    }
+
+    #[test]
+    fn inject_fake_user_id_preserves_claude_code_metadata_shape() {
+        let existing = json!({
+            "device_id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "account_uuid": "22222222-2222-2222-2222-222222222222",
+            "session_id": "33333333-3333-3333-3333-333333333333"
+        })
+        .to_string();
         let mut payload = json!({
             "metadata": {
                 "user_id": existing.clone()
