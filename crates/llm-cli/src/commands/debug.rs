@@ -87,11 +87,7 @@ async fn models(provider: &str, ctx: &AppContext) -> Result<()> {
         .map(|d| d.default_model.clone())
         .unwrap_or_else(|| llm_core::ModelId::new("gpt-4o-mini"));
 
-    let base_url = match &auth_session.method {
-        llm_auth::AuthMethod::OAuth { .. } => llm_provider_openai::CHATGPT_API_BASE,
-        _ => llm_provider_openai::API_BASE,
-    };
-    let client = llm_provider_openai::OpenAiClient::new(auth_session, model_id, base_url);
+    let client = llm_provider_openai::OpenAiClient::from_session(auth_session, model_id);
 
     use llm_provider_api::LlmProviderClient;
     let models = client.list_models().await?;

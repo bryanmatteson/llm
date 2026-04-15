@@ -3,7 +3,7 @@ use std::pin::Pin;
 use async_trait::async_trait;
 use tokio_stream::Stream;
 
-use llm_auth::AuthSession;
+use llm_auth::{AuthMethod, AuthSession};
 use llm_core::{
     ContentBlock, Message, ModelDescriptor, ModelId, ProviderId, Result, Role, StopReason,
     TokenUsage,
@@ -41,10 +41,7 @@ impl OpenAiClient {
     ///   explicit base URL is provided, the client automatically routes to
     ///   the ChatGPT backend API (`CHATGPT_API_BASE`).
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: impl Into<String>) -> Self {
-        let chatgpt_account_id = auth_session
-            .metadata
-            .get("chatgpt_account_id")
-            .cloned();
+        let chatgpt_account_id = auth_session.metadata.get("chatgpt_account_id").cloned();
         Self {
             http: reqwest::Client::new(),
             auth_session,
@@ -57,12 +54,23 @@ impl OpenAiClient {
     /// Create a new client, automatically selecting the base URL from the
     /// auth session method.
     ///
-    /// Both API key and OAuth sessions use the standard OpenAI API base.
+    /// API key sessions use the public OpenAI API base. OAuth and bearer-token
+    /// sessions route through the ChatGPT Codex backend.
     pub fn from_session(auth_session: AuthSession, model: ModelId) -> Self {
-        Self::new(auth_session, model, crate::descriptor::API_BASE)
+        let base_url = Self::default_base_url(&auth_session);
+        Self::new(auth_session, model, base_url)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
+
+    fn default_base_url(auth_session: &AuthSession) -> &'static str {
+        match auth_session.method {
+            AuthMethod::ApiKey { .. } => crate::descriptor::API_BASE,
+            AuthMethod::OAuth { .. } | AuthMethod::Bearer { .. } => {
+                crate::descriptor::CHATGPT_API_BASE
+            }
+        }
+    }
 
     /// Build the `Authorization` header value.
     fn auth_header(&self) -> String {
@@ -209,6 +217,16 @@ impl OpenAiClient {
         }
     }
 
+    #[cfg(test)]
+    fn test_auth_session(method: AuthMethod) -> AuthSession {
+        AuthSession {
+            provider_id: PROVIDER_ID.clone(),
+            method,
+            tokens: llm_auth::TokenPair::new("token".into(), None, 3600),
+            metadata: Default::default(),
+        }
+    }
+
     /// Read the response body and, if the status is not 2xx, return a
     /// `FrameworkError::Provider`.
     async fn check_response(
@@ -287,16 +305,9 @@ impl LlmProviderClient for OpenAiClient {
         if let Some(account_id) = &self.chatgpt_account_id {
             req = req.header("ChatGPT-Account-ID", account_id);
         }
-        let resp = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("request failed: {e}"),
-                )
-            })?;
+        let resp = req.json(&body).send().await.map_err(|e| {
+            llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
+        })?;
 
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
@@ -356,15 +367,12 @@ impl LlmProviderClient for OpenAiClient {
         if let Some(account_id) = &self.chatgpt_account_id {
             req = req.header("ChatGPT-Account-ID", account_id);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("list models request failed: {e}"),
-                )
-            })?;
+        let resp = req.send().await.map_err(|e| {
+            llm_core::FrameworkError::provider(
+                PROVIDER_ID.clone(),
+                format!("list models request failed: {e}"),
+            )
+        })?;
 
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
@@ -502,5 +510,36 @@ mod tests {
             OpenAiClient::map_stop_reason(Some("unknown")),
             StopReason::EndTurn
         );
+    }
+
+    #[test]
+    fn from_session_uses_api_base_for_api_keys() {
+        let client = OpenAiClient::from_session(
+            OpenAiClient::test_auth_session(AuthMethod::ApiKey {
+                masked: "sk-***".into(),
+            }),
+            ModelId::new("gpt-4o"),
+        );
+        assert_eq!(client.base_url, crate::descriptor::API_BASE);
+    }
+
+    #[test]
+    fn from_session_uses_chatgpt_base_for_bearer_tokens() {
+        let client = OpenAiClient::from_session(
+            OpenAiClient::test_auth_session(AuthMethod::Bearer { expires_at: None }),
+            ModelId::new("gpt-4o"),
+        );
+        assert_eq!(client.base_url, crate::descriptor::CHATGPT_API_BASE);
+    }
+
+    #[test]
+    fn from_session_uses_chatgpt_base_for_oauth_sessions() {
+        let client = OpenAiClient::from_session(
+            OpenAiClient::test_auth_session(AuthMethod::OAuth {
+                expires_at: chrono::Utc::now(),
+            }),
+            ModelId::new("gpt-4o"),
+        );
+        assert_eq!(client.base_url, crate::descriptor::CHATGPT_API_BASE);
     }
 }

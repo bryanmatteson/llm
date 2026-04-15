@@ -166,11 +166,7 @@ async fn interactive_loop(
                 .unwrap_or_else(|| ModelId::new("gpt-4o-mini"))
         });
 
-        let base_url = match &auth_session.method {
-            llm_auth::AuthMethod::OAuth { .. } => llm_provider_openai::CHATGPT_API_BASE,
-            _ => llm_provider_openai::API_BASE,
-        };
-        let client = OpenAiClient::new(auth_session, model_id, base_url);
+        let client = OpenAiClient::from_session(auth_session, model_id);
 
         let adapter = OpenAiToolFormat;
         let approval = CliApprovalHandler;
