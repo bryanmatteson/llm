@@ -3,6 +3,7 @@ pub mod client;
 pub mod descriptor;
 pub mod features;
 pub mod tools;
+pub mod transport;
 pub mod wire;
 
 // ── Re-exports ──────────────────────────────────────────────────────

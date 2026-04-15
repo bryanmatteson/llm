@@ -20,16 +20,15 @@ use llm_core::{
     StopReason, TokenUsage,
 };
 use llm_provider_api::{LlmProviderClient, ProviderEvent, TurnRequest, TurnResponse};
+use rquest as reqwest;
 
 use crate::descriptor::{API_BASE, PROVIDER_ID};
 use crate::wire::{ContainerRequest, MessagesRequest, MessagesResponse, WireContent, WireMessage};
 
 /// Anthropic-specific LLM client.
 ///
-/// Wraps an HTTP client and an authenticated session to talk to the Anthropic
-/// Messages API.
+/// Wraps an authenticated session to talk to the Anthropic Messages API.
 pub struct AnthropicClient {
-    http: reqwest::Client,
     auth_session: AuthSession,
     base_url: String,
     model: ModelId,
@@ -142,7 +141,6 @@ impl AnthropicClient {
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: Option<String>) -> Self {
         let session_id = Self::session_id(&auth_session);
         Self {
-            http: reqwest::Client::new(),
             auth_session,
             base_url: base_url.unwrap_or_else(|| API_BASE.to_string()),
             model,
@@ -2045,8 +2043,9 @@ impl LlmProviderClient for AnthropicClient {
         let prepared = self.prepare_body(&body);
 
         let url = self.request_url();
+        let http = crate::transport::anthropic_runtime_http()?;
         let builder =
-            self.apply_request_headers(self.http.post(&url), request, &prepared.extra_betas, false);
+            client.apply_request_headers(http.post(&url), request, &prepared.extra_betas, false);
 
         let resp = builder.json(&prepared.body).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
@@ -2135,8 +2134,9 @@ impl LlmProviderClient for AnthropicClient {
         let prepared = self.prepare_body(&body);
 
         let url = self.request_url();
+        let http = crate::transport::anthropic_runtime_http()?;
         let builder =
-            self.apply_request_headers(self.http.post(&url), request, &prepared.extra_betas, true);
+            client.apply_request_headers(http.post(&url), request, &prepared.extra_betas, true);
 
         let resp = builder.json(&prepared.body).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))

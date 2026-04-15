@@ -63,7 +63,6 @@ fn refresh_token_payload(refresh_token: &str) -> serde_json::Value {
 /// 2. Otherwise, an OAuth browser flow is offered.
 pub struct AnthropicAuthProvider {
     provider_id: ProviderId,
-    http: reqwest::Client,
     /// Held between `start_login` and `complete_login` so the verifier is
     /// available for the token exchange.
     pkce: std::sync::Mutex<Option<PkceChallenge>>,
@@ -81,7 +80,6 @@ impl AnthropicAuthProvider {
     pub fn new() -> Self {
         Self {
             provider_id: PROVIDER_ID.clone(),
-            http: reqwest::Client::new(),
             pkce: std::sync::Mutex::new(None),
         }
     }
@@ -184,10 +182,10 @@ impl AuthProvider for AnthropicAuthProvider {
 
         let endpoints = anthropic_endpoints();
         let redirect_uri = redirect_uri_for(&endpoints.redirect, 0);
+        let http = crate::transport::anthropic_auth_http()?;
 
         // Anthropic requires the `state` parameter in the token exchange body.
-        let token_resp: OAuthTokenResponse = self
-            .http
+        let token_resp: OAuthTokenResponse = http
             .post(endpoints.token_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
@@ -239,9 +237,9 @@ impl AuthProvider for AnthropicAuthProvider {
             .ok_or_else(|| FrameworkError::auth("no refresh token available"))?;
 
         let endpoints = anthropic_endpoints();
+        let http = crate::transport::anthropic_auth_http()?;
 
-        let token_resp: OAuthTokenResponse = self
-            .http
+        let token_resp: OAuthTokenResponse = http
             .post(endpoints.token_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
