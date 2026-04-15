@@ -10,18 +10,19 @@ use crate::descriptor::{ANTHROPIC_CLIENT_ID, PROVIDER_ID};
 /// OAuth endpoint configuration for Anthropic.
 ///
 /// Notable differences from OpenAI:
-/// - Uses a remote callback redirect (`https://console.anthropic.com/oauth/code/callback`)
 /// - The `state` parameter doubles as the PKCE verifier (`state_is_verifier = true`)
+/// - Token URL is on `api.anthropic.com`, not the auth host
 /// - Includes extra auth param `("code", "true")`
 fn anthropic_endpoints() -> OAuthEndpoints {
     OAuthEndpoints {
         auth_url: "https://claude.ai/oauth/authorize",
-        token_url: "https://console.anthropic.com/v1/oauth/token",
-        scopes: "org:create_api_key user:profile user:inference",
+        token_url: "https://api.anthropic.com/v1/oauth/token",
+        scopes: "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload",
         default_client_id: Some(ANTHROPIC_CLIENT_ID),
         default_client_secret: None,
-        redirect: RedirectStrategy::RemoteCallback {
-            redirect_uri: "https://console.anthropic.com/oauth/code/callback",
+        redirect: RedirectStrategy::Localhost {
+            path: "/callback",
+            fixed_port: None,
         },
         extra_auth_params: &[("code", "true")],
         state_is_verifier: true,
