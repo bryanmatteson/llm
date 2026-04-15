@@ -483,6 +483,7 @@ impl LlmProviderClient for OpenAiClient {
             let model = request.model.as_ref().unwrap_or(&self.model).to_string();
             let mut body = serde_json::Map::new();
             body.insert("model".into(), Value::String(model));
+            body.insert("store".into(), Value::Bool(false));
             if let Some(instructions) = request
                 .system_prompt
                 .as_deref()
@@ -861,6 +862,7 @@ mod tests {
         };
 
         let mut body = serde_json::Map::new();
+        body.insert("store".into(), Value::Bool(false));
         if let Some(instructions) = request
             .system_prompt
             .as_deref()
@@ -874,6 +876,7 @@ mod tests {
             Value::Array(OpenAiClient::request_to_responses_input(&request)),
         );
 
+        assert_eq!(body["store"], false);
         assert_eq!(body["instructions"], "You are helpful.");
         assert_eq!(body["input"][0]["role"], "user");
     }
