@@ -53,8 +53,8 @@ const FAST_MODE_BETA: &str = "fast-mode-2026-02-01";
 const REDACT_THINKING_BETA: &str = "redact-thinking-2026-02-12";
 const TOKEN_EFFICIENT_TOOLS_BETA: &str = "token-efficient-tools-2026-03-28";
 const CLAUDE_CLI_USER_AGENT: &str = "claude-cli/2.1.63 (external, cli)";
-const CLAUDE_STAINLESS_PACKAGE_VERSION: &str = "0.75.0";
-const CLAUDE_STAINLESS_RUNTIME_VERSION: &str = "v24.4.0";
+const CLAUDE_STAINLESS_PACKAGE_VERSION: &str = "0.74.0";
+const CLAUDE_STAINLESS_RUNTIME_VERSION: &str = "v24.3.0";
 const CLAUDE_VERSION: &str = "2.1.63";
 const FINGERPRINT_SALT: &str = "59cf53e54c78";
 const CLAUDE_CCH_SEED: u64 = 0x6E52_736A_C806_831E;
@@ -75,11 +75,11 @@ const CLAUDE_CODE_DOING_TASKS: &str = r#"# Doing tasks
 - In general, do not propose changes to code you haven't read. If a user asks about or wants you to modify a file, read it first. Understand existing code before suggesting modifications.
 - Do not create files unless they're absolutely necessary for achieving your goal. Generally prefer editing an existing file to creating a new one, as this prevents file bloat and builds on existing work more effectively.
 - Avoid giving time estimates or predictions for how long tasks will take, whether for your own work or for users planning projects. Focus on what needs to be done, not how long it might take.
-- If an approach fails, diagnose why before switching tactics-read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either. Escalate to the user with AskUserQuestion only when you're genuinely stuck after investigation, not as a first response to friction.
+- If an approach fails, diagnose why before switching tactics—read the error, check your assumptions, try a focused fix. Don't retry the identical action blindly, but don't abandon a viable approach after a single failure either. Escalate to the user with AskUserQuestion only when you're genuinely stuck after investigation, not as a first response to friction.
 - Be careful not to introduce security vulnerabilities such as command injection, XSS, SQL injection, and other OWASP top 10 vulnerabilities. If you notice that you wrote insecure code, immediately fix it. Prioritize writing safe, secure, and correct code.
 - Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change. Only add comments where the logic isn't self-evident.
 - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs). Don't use feature flags or backwards-compatibility shims when you can just change the code.
-- Don't create helpers, utilities, or abstractions for one-time operations. Don't design for hypothetical future requirements. The right amount of complexity is what the task actually requires-no speculative abstractions, but no half-finished implementations either. Three similar lines of code is better than a premature abstraction.
+- Don't create helpers, utilities, or abstractions for one-time operations. Don't design for hypothetical future requirements. The right amount of complexity is what the task actually requires—no speculative abstractions, but no half-finished implementations either. Three similar lines of code is better than a premature abstraction.
 - Avoid backwards-compatibility hacks like renaming unused _vars, re-exporting types, adding // removed comments for removed code, etc. If you are certain that something is unused, you can delete it completely.
 - If the user asks for help or wants to give feedback inform them of the following:
   - /help: Get help with using Claude Code
@@ -93,7 +93,7 @@ const CLAUDE_CODE_OUTPUT_EFFICIENCY: &str = r#"# Output efficiency
 
 IMPORTANT: Go straight to the point. Try the simplest approach first without going in circles. Do not overdo it. Be extra concise.
 
-Keep your text output brief and direct. Lead with the answer or action, not the reasoning. Skip filler words, preamble, and unnecessary transitions. Do not restate what the user said - just do it. When explaining, include only what is necessary for the user to understand.
+Keep your text output brief and direct. Lead with the answer or action, not the reasoning. Skip filler words, preamble, and unnecessary transitions. Do not restate what the user said — just do it. When explaining, include only what is necessary for the user to understand.
 
 Focus text output on:
 - Decisions that need the user's input
@@ -1007,7 +1007,7 @@ impl AnthropicClient {
         }
 
         let unsigned_text = Self::replace_cch(first_text, "00000");
-        if unsigned_text == first_text {
+        if !unsigned_text.contains("cch=00000;") {
             return;
         }
 
@@ -2030,7 +2030,7 @@ impl LlmProviderClient for AnthropicClient {
         let body = MessagesRequest {
             model: model.clone(),
             max_tokens,
-            temperature: request.temperature,
+            temperature: request.temperature.map(f64::from),
             system,
             container: Self::latest_container(&request.messages),
             cache_control: request.provider_request.get("cache_control").cloned(),
@@ -2121,7 +2121,7 @@ impl LlmProviderClient for AnthropicClient {
         let body = MessagesRequest {
             model,
             max_tokens,
-            temperature: request.temperature,
+            temperature: request.temperature.map(f64::from),
             system,
             container: Self::latest_container(&request.messages),
             cache_control: request.provider_request.get("cache_control").cloned(),
@@ -2180,6 +2180,8 @@ impl LlmProviderClient for AnthropicClient {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use llm_auth::{AuthMethod, AuthSession, TokenPair};
     use llm_core::ContentBlock;
     use serde_json::json;
@@ -2193,6 +2195,202 @@ mod tests {
             tokens: TokenPair::new("test-token".to_string(), None, 3600),
             metadata: Metadata::new(),
         }
+    }
+
+    fn cliproxyapi_oauth_session() -> AuthSession {
+        AuthSession {
+            provider_id: PROVIDER_ID.clone(),
+            method: AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            },
+            tokens: TokenPair::new("sk-ant-oat-test-token".to_string(), None, 3600),
+            metadata: Metadata::new(),
+        }
+    }
+
+    fn cliproxyapi_golden_body() -> MessagesRequest {
+        MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 1024,
+            temperature: Some(0.2),
+            system: Some(Value::String(
+                "Use tools carefully.\nFollow project conventions.".into(),
+            )),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![
+                WireMessage {
+                    role: "user".into(),
+                    content: WireContent::Blocks(vec![json!({
+                        "type": "text",
+                        "text": "first question",
+                    })]),
+                },
+                WireMessage {
+                    role: "assistant".into(),
+                    content: WireContent::Blocks(vec![json!({
+                        "type": "tool_use",
+                        "id": "toolu_01",
+                        "name": "bash",
+                        "input": {"command": "pwd"},
+                    })]),
+                },
+                WireMessage {
+                    role: "user".into(),
+                    content: WireContent::Blocks(vec![
+                        json!({
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_01",
+                            "content": [
+                                {
+                                    "type": "tool_reference",
+                                    "tool_name": "bash",
+                                }
+                            ],
+                        }),
+                        json!({
+                            "type": "text",
+                            "text": "second question",
+                        }),
+                    ]),
+                },
+            ],
+            tools: vec![
+                json!({
+                    "name": "bash",
+                    "description": "Run shell commands",
+                    "input_schema": {"type": "object"},
+                }),
+                json!({
+                    "name": "read",
+                    "description": "Read files",
+                    "input_schema": {"type": "object"},
+                }),
+            ],
+            stream: false,
+            extra_body: serde_json::Map::from_iter([
+                (
+                    "metadata".into(),
+                    json!({
+                        "user_id": "user_1111111111111111111111111111111111111111111111111111111111111111_account_22222222-2222-2222-2222-222222222222_session_33333333-3333-3333-3333-333333333333"
+                    }),
+                ),
+                ("betas".into(), json!(["context-1m-2025-08-07"])),
+                (
+                    "tool_choice".into(),
+                    json!({"type": "tool", "name": "bash"}),
+                ),
+                ("thinking".into(), json!({"type": "enabled"})),
+                ("output_config".into(), json!({"effort": "high"})),
+            ]),
+        }
+    }
+
+    fn cliproxyapi_golden_turn_request() -> TurnRequest {
+        TurnRequest {
+            system_prompt: None,
+            messages: vec![Message::user("first question")],
+            tools: vec![
+                json!({
+                    "name": "bash",
+                    "description": "Run shell commands",
+                    "input_schema": {"type": "object"},
+                }),
+                json!({
+                    "name": "read",
+                    "description": "Read files",
+                    "input_schema": {"type": "object"},
+                }),
+            ],
+            provider_request: Default::default(),
+            model: None,
+            max_tokens: None,
+            temperature: Some(0.2),
+        }
+    }
+
+    fn request_headers_map(request: &reqwest::Request) -> BTreeMap<String, String> {
+        let mut headers = BTreeMap::new();
+        for (name, value) in request.headers() {
+            let key = name.as_str().to_ascii_lowercase();
+            let mut value = value.to_str().unwrap_or_default().to_string();
+            if key == "x-client-request-id" {
+                value = "<uuid>".into();
+            } else if key == "x-claude-code-session-id" {
+                value = "<session-id>".into();
+            }
+            headers.insert(key, value);
+        }
+        headers
+    }
+
+    fn normalize_golden_body(mut value: Value) -> Value {
+        if let Some(text) = value
+            .get("system")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.first())
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+            .map(|text| AnthropicClient::replace_cch(text, "<cch>"))
+        {
+            if let Some(first) = value
+                .get_mut("system")
+                .and_then(Value::as_array_mut)
+                .and_then(|blocks| blocks.first_mut())
+                .and_then(Value::as_object_mut)
+            {
+                first.insert("text".into(), Value::String(text));
+            }
+        }
+        value
+    }
+
+    #[test]
+    fn prepare_body_matches_cliproxyapi_golden() {
+        let client = AnthropicClient::new(
+            cliproxyapi_oauth_session(),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = cliproxyapi_golden_body();
+
+        let prepared = client.prepare_body(&body);
+        let expected: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/cliproxyapi_oauth_body.json"
+        ))
+        .expect("fixture body json");
+
+        assert_eq!(normalize_golden_body(prepared.body), expected);
+    }
+
+    #[test]
+    fn oauth_headers_match_cliproxyapi_golden() {
+        let client = AnthropicClient::new(
+            cliproxyapi_oauth_session(),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = cliproxyapi_golden_body();
+        let prepared = client.prepare_body(&body);
+        let request = cliproxyapi_golden_turn_request();
+        let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
+        let built = client
+            .apply_request_headers(
+                http.post(client.request_url()),
+                &request,
+                &prepared.extra_betas,
+                false,
+            )
+            .build()
+            .expect("request build");
+
+        let expected: BTreeMap<String, String> = serde_json::from_str(include_str!(
+            "../tests/fixtures/cliproxyapi_oauth_headers.json"
+        ))
+        .expect("fixture headers json");
+
+        assert_eq!(request_headers_map(&built), expected);
     }
 
     #[test]
