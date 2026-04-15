@@ -56,19 +56,18 @@ impl AnthropicClient {
 
     // ── Helpers ─────────────────────────────────────────────────────
 
-    /// Build auth headers based on the session's authentication method.
+    /// Build auth headers based on the token type.
     ///
-    /// - API key auth: `x-api-key` header
-    /// - OAuth / Bearer: `Authorization: Bearer` header
+    /// Anthropic's OAuth flow issues `sk-ant-*` tokens that must be sent via
+    /// `x-api-key`, not `Authorization: Bearer`. We detect this by prefix
+    /// rather than relying solely on the auth method, since the credential
+    /// may have been loaded from a session file as a bearer token.
     fn apply_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        use llm_auth::AuthMethod;
-        match &self.auth_session.method {
-            AuthMethod::ApiKey { .. } => {
-                builder.header("x-api-key", &self.auth_session.tokens.access_token)
-            }
-            AuthMethod::OAuth { .. } | AuthMethod::Bearer { .. } => {
-                builder.bearer_auth(&self.auth_session.tokens.access_token)
-            }
+        let token = &self.auth_session.tokens.access_token;
+        if token.starts_with("sk-ant-") {
+            builder.header("x-api-key", token)
+        } else {
+            builder.bearer_auth(token)
         }
     }
 
