@@ -15,13 +15,13 @@ use crate::descriptor::{ANTHROPIC_CLIENT_ID, PROVIDER_ID};
 /// - Includes extra auth param `("code", "true")`
 fn anthropic_endpoints() -> OAuthEndpoints {
     OAuthEndpoints {
-        auth_url: "https://claude.ai/oauth/authorize",
-        token_url: "https://console.anthropic.com/v1/oauth/token",
+        auth_url: "https://platform.claude.com/oauth/authorize",
+        token_url: "https://platform.claude.com/v1/oauth/token",
         scopes: "org:create_api_key user:profile user:inference",
         default_client_id: Some(ANTHROPIC_CLIENT_ID),
         default_client_secret: None,
         redirect: RedirectStrategy::RemoteCallback {
-            redirect_uri: "https://console.anthropic.com/oauth/code/callback",
+            redirect_uri: "https://platform.claude.com/oauth/code/callback",
         },
         extra_auth_params: &[("code", "true")],
         state_is_verifier: true,
