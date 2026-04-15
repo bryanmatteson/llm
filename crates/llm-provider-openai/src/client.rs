@@ -751,6 +751,11 @@ impl LlmProviderClient for OpenAiClient {
             body.insert("model".into(), Value::String(model));
             body.insert("store".into(), Value::Bool(false));
             body.insert("stream".into(), Value::Bool(true));
+            body.insert("parallel_tool_calls".into(), Value::Bool(true));
+            body.insert(
+                "include".into(),
+                Value::Array(vec![Value::String("reasoning.encrypted_content".into())]),
+            );
             if let Some(instructions) = request
                 .system_prompt
                 .as_deref()
@@ -763,12 +768,6 @@ impl LlmProviderClient for OpenAiClient {
                 "input".into(),
                 Value::Array(Self::request_to_responses_input(request)),
             );
-            if let Some(temperature) = request.temperature {
-                body.insert("temperature".into(), json!(temperature));
-            }
-            if let Some(max_tokens) = request.max_tokens {
-                body.insert("max_output_tokens".into(), json!(max_tokens));
-            }
             if !request.tools.is_empty() {
                 body.insert(
                     "tools".into(),
@@ -1142,6 +1141,11 @@ mod tests {
         let mut body = serde_json::Map::new();
         body.insert("store".into(), Value::Bool(false));
         body.insert("stream".into(), Value::Bool(true));
+        body.insert("parallel_tool_calls".into(), Value::Bool(true));
+        body.insert(
+            "include".into(),
+            Value::Array(vec![Value::String("reasoning.encrypted_content".into())]),
+        );
         if let Some(instructions) = request
             .system_prompt
             .as_deref()
@@ -1157,8 +1161,12 @@ mod tests {
 
         assert_eq!(body["store"], false);
         assert_eq!(body["stream"], true);
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"][0], "reasoning.encrypted_content");
         assert_eq!(body["instructions"], "You are helpful.");
         assert_eq!(body["input"][0]["role"], "user");
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("max_output_tokens").is_none());
     }
 
     #[test]
