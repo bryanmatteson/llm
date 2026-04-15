@@ -37,6 +37,7 @@ const TOOL_CALLER_TYPE_KEY: &str = "anthropic.caller_type";
 const TOOL_CALLER_TOOL_ID_KEY: &str = "anthropic.caller_tool_id";
 const ADVANCED_TOOL_USE_BETA: &str = "advanced-tool-use-2025-11-20";
 const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 impl AnthropicClient {
     /// Create a new client.
@@ -138,8 +139,16 @@ impl AnthropicClient {
             .contains_key(MESSAGE_CACHE_CONTROL_METADATA_KEY)
     }
 
-    fn automatic_beta_headers(request: &TurnRequest) -> Vec<String> {
+    fn beta_headers(&self, request: &TurnRequest) -> Vec<String> {
         let mut betas = Vec::new();
+
+        // OAuth authentication requires the oauth beta header.
+        if matches!(
+            self.auth_session.method,
+            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. }
+        ) {
+            betas.push(OAUTH_BETA.to_string());
+        }
 
         if request.provider_request.contains_key("context_management") {
             betas.push(CONTEXT_MANAGEMENT_BETA.to_string());
@@ -798,7 +807,7 @@ impl LlmProviderClient for AnthropicClient {
             .post(&url)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json");
-        let betas = Self::automatic_beta_headers(request);
+        let betas = self.beta_headers(request);
         let builder = if betas.is_empty() {
             builder
         } else {
@@ -880,7 +889,7 @@ impl LlmProviderClient for AnthropicClient {
             .post(&url)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json");
-        let betas = Self::automatic_beta_headers(request);
+        let betas = self.beta_headers(request);
         let builder = if betas.is_empty() {
             builder
         } else {
