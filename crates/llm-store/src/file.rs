@@ -105,14 +105,31 @@ fn list_json_stems(dir: &Path) -> Result<Vec<String>> {
 #[derive(Debug, Clone)]
 pub struct FileCredentialStore {
     dir: PathBuf,
+    /// Session name used in the filename: `<provider>-<name>.json`.
+    /// Defaults to `"default"`.
+    session_name: String,
 }
 
 impl FileCredentialStore {
-    /// Create a new store rooted at `dir`.  The directory is created lazily
-    /// on first write.
+    /// Create a new store rooted at `dir` with session name `"default"`.
+    /// The directory is created lazily on first write.
     #[must_use]
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            session_name: "default".to_string(),
+        }
+    }
+
+    /// Create a new store with an explicit session name.
+    ///
+    /// The session file will be written as `<provider>-<name>.json`.
+    #[must_use]
+    pub fn with_name(dir: impl Into<PathBuf>, name: impl Into<String>) -> Self {
+        Self {
+            dir: dir.into(),
+            session_name: name.into(),
+        }
     }
 
     fn api_key_path(&self, provider: &ProviderId) -> PathBuf {
@@ -121,8 +138,11 @@ impl FileCredentialStore {
     }
 
     fn session_path(&self, provider: &ProviderId) -> PathBuf {
-        self.dir
-            .join(format!("{}-default.json", safe_filename(provider.as_str())))
+        self.dir.join(format!(
+            "{}-{}.json",
+            safe_filename(provider.as_str()),
+            safe_filename(&self.session_name),
+        ))
     }
 }
 
