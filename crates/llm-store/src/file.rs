@@ -122,7 +122,7 @@ impl FileCredentialStore {
 
     fn session_path(&self, provider: &ProviderId) -> PathBuf {
         self.dir
-            .join(format!("{}_session.json", safe_filename(provider.as_str())))
+            .join(format!("{}-default.json", safe_filename(provider.as_str())))
     }
 }
 
