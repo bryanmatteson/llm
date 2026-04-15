@@ -2,8 +2,9 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use base64::Engine;
+use reqwest::header::CONTENT_TYPE;
 use serde_json::{Value, json};
-use tokio_stream::Stream;
+use tokio_stream::{Stream, StreamExt};
 
 use llm_auth::{AuthMethod, AuthSession};
 use llm_core::{
@@ -32,6 +33,14 @@ pub struct OpenAiClient {
     /// ChatGPT account ID extracted from the OAuth access-token JWT.
     /// When present, every request includes a `ChatGPT-Account-ID` header.
     chatgpt_account_id: Option<String>,
+}
+
+#[derive(Default)]
+struct ResponsesStreamState {
+    output: Vec<Value>,
+    usage: TokenUsage,
+    model: Option<ModelId>,
+    incomplete_reason: Option<String>,
 }
 
 impl OpenAiClient {
@@ -304,6 +313,263 @@ impl OpenAiClient {
         ))
     }
 
+    fn upsert_responses_output_item(output: &mut Vec<Value>, item: Value) {
+        let item_key = item
+            .get("id")
+            .or_else(|| item.get("call_id"))
+            .and_then(Value::as_str);
+
+        if let Some(item_key) = item_key
+            && let Some(existing) = output.iter_mut().find(|existing| {
+                existing
+                    .get("id")
+                    .or_else(|| existing.get("call_id"))
+                    .and_then(Value::as_str)
+                    == Some(item_key)
+            })
+        {
+            *existing = item;
+            return;
+        }
+
+        output.push(item);
+    }
+
+    fn handle_responses_stream_event(
+        event_name: &str,
+        data: &str,
+        state: &mut ResponsesStreamState,
+    ) -> Result<()> {
+        let value: Value = serde_json::from_str(data).map_err(|e| {
+            llm_core::FrameworkError::provider(
+                PROVIDER_ID.clone(),
+                format!("failed to parse OpenAI responses SSE payload: {e}"),
+            )
+        })?;
+
+        match event_name {
+            "error" | "response.failed" => {
+                let message = value
+                    .pointer("/error/message")
+                    .or_else(|| value.pointer("/response/error/message"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown responses stream error");
+                return Err(llm_core::FrameworkError::provider(
+                    PROVIDER_ID.clone(),
+                    format!("OpenAI responses stream error: {message}"),
+                ));
+            }
+            "response.output_item.added" | "response.output_item.done" => {
+                if let Some(item) = value.get("item").cloned() {
+                    Self::upsert_responses_output_item(&mut state.output, item);
+                }
+            }
+            "response.server_model" => {
+                if let Some(model) = value.get("model").and_then(Value::as_str) {
+                    state.model = Some(ModelId::new(model));
+                }
+            }
+            "response.completed" => {
+                if let Some(model) = value.pointer("/response/model").and_then(Value::as_str) {
+                    state.model = Some(ModelId::new(model));
+                }
+                if let Some(reason) = value
+                    .pointer("/response/incomplete_details/reason")
+                    .and_then(Value::as_str)
+                {
+                    state.incomplete_reason = Some(reason.to_string());
+                }
+                if let Some(usage) = value.pointer("/response/usage").and_then(Value::as_object) {
+                    state.usage = TokenUsage {
+                        input_tokens: usage
+                            .get("input_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                        output_tokens: usage
+                            .get("output_tokens")
+                            .and_then(Value::as_u64)
+                            .unwrap_or_default(),
+                    };
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn finalize_responses_stream(state: ResponsesStreamState, fallback_model: &ModelId) -> Value {
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "model".into(),
+            Value::String(
+                state
+                    .model
+                    .as_ref()
+                    .map(|model| model.as_str().to_string())
+                    .unwrap_or_else(|| fallback_model.as_str().to_string()),
+            ),
+        );
+        body.insert("output".into(), Value::Array(state.output));
+        body.insert(
+            "usage".into(),
+            json!({
+                "input_tokens": state.usage.input_tokens,
+                "output_tokens": state.usage.output_tokens,
+            }),
+        );
+        if let Some(reason) = state.incomplete_reason {
+            body.insert(
+                "incomplete_details".into(),
+                json!({
+                    "reason": reason,
+                }),
+            );
+        }
+        Value::Object(body)
+    }
+
+    async fn parse_responses_sse(
+        response: reqwest::Response,
+        fallback_model: &ModelId,
+    ) -> Result<Value> {
+        let mut state = ResponsesStreamState::default();
+        let mut bytes = response.bytes_stream();
+        let mut pending = String::new();
+        let mut event_name: Option<String> = None;
+        let mut data_lines: Vec<String> = Vec::new();
+
+        while let Some(chunk) = bytes.next().await {
+            let chunk = chunk.map_err(|e| {
+                llm_core::FrameworkError::provider(
+                    PROVIDER_ID.clone(),
+                    format!("failed to read OpenAI responses stream: {e}"),
+                )
+            })?;
+
+            pending.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(newline) = pending.find('\n') {
+                let mut line = pending[..newline].to_string();
+                pending.drain(..=newline);
+
+                if line.ends_with('\r') {
+                    line.pop();
+                }
+
+                if line.is_empty() {
+                    if !data_lines.is_empty() {
+                        let payload = data_lines.join("\n");
+                        let derived_event =
+                            serde_json::from_str::<Value>(&payload)
+                                .ok()
+                                .and_then(|value| {
+                                    value
+                                        .get("type")
+                                        .and_then(Value::as_str)
+                                        .map(str::to_string)
+                                });
+                        let event = event_name
+                            .clone()
+                            .or(derived_event)
+                            .unwrap_or_else(|| "message".to_string());
+                        Self::handle_responses_stream_event(&event, &payload, &mut state)?;
+                    }
+                    event_name = None;
+                    data_lines.clear();
+                    continue;
+                }
+
+                if let Some(rest) = line.strip_prefix("event:") {
+                    event_name = Some(rest.trim_start().to_string());
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("data:") {
+                    data_lines.push(rest.trim_start().to_string());
+                }
+            }
+        }
+
+        if !data_lines.is_empty() {
+            let payload = data_lines.join("\n");
+            let derived_event = serde_json::from_str::<Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            let event = event_name
+                .clone()
+                .or(derived_event)
+                .unwrap_or_else(|| "message".to_string());
+            Self::handle_responses_stream_event(&event, &payload, &mut state)?;
+        }
+
+        Ok(Self::finalize_responses_stream(state, fallback_model))
+    }
+
+    #[cfg(test)]
+    fn parse_responses_sse_text(document: &str, fallback_model: &ModelId) -> Result<Value> {
+        let mut state = ResponsesStreamState::default();
+        let mut event_name: Option<String> = None;
+        let mut data_lines: Vec<String> = Vec::new();
+
+        for raw_line in document.lines() {
+            let line = raw_line.trim_end_matches('\r');
+
+            if line.is_empty() {
+                if !data_lines.is_empty() {
+                    let payload = data_lines.join("\n");
+                    let derived_event = serde_json::from_str::<Value>(&payload)
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .get("type")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        });
+                    let event = event_name
+                        .clone()
+                        .or(derived_event)
+                        .unwrap_or_else(|| "message".to_string());
+                    Self::handle_responses_stream_event(&event, &payload, &mut state)?;
+                }
+                event_name = None;
+                data_lines.clear();
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("event:") {
+                event_name = Some(rest.trim_start().to_string());
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("data:") {
+                data_lines.push(rest.trim_start().to_string());
+            }
+        }
+
+        if !data_lines.is_empty() {
+            let payload = data_lines.join("\n");
+            let derived_event = serde_json::from_str::<Value>(&payload)
+                .ok()
+                .and_then(|value| {
+                    value
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                });
+            let event = event_name
+                .clone()
+                .or(derived_event)
+                .unwrap_or_else(|| "message".to_string());
+            Self::handle_responses_stream_event(&event, &payload, &mut state)?;
+        }
+
+        Ok(Self::finalize_responses_stream(state, fallback_model))
+    }
+
     /// Convert a canonical [`Message`] to the OpenAI wire format.
     fn message_to_wire(msg: &Message) -> WireMessage {
         let role = match msg.role {
@@ -484,6 +750,7 @@ impl LlmProviderClient for OpenAiClient {
             let mut body = serde_json::Map::new();
             body.insert("model".into(), Value::String(model));
             body.insert("store".into(), Value::Bool(false));
+            body.insert("stream".into(), Value::Bool(true));
             if let Some(instructions) = request
                 .system_prompt
                 .as_deref()
@@ -528,12 +795,23 @@ impl LlmProviderClient for OpenAiClient {
             })?;
 
             let resp = Self::check_response(resp, &PROVIDER_ID).await?;
-            let response_value: Value = resp.json().await.map_err(|e| {
-                llm_core::FrameworkError::provider(
-                    PROVIDER_ID.clone(),
-                    format!("failed to parse responses API reply: {e}"),
-                )
-            })?;
+            let is_event_stream = resp
+                .headers()
+                .get(CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(|content_type| content_type.contains("text/event-stream"))
+                .unwrap_or(false);
+            let response_value = if is_event_stream {
+                Self::parse_responses_sse(resp, request.model.as_ref().unwrap_or(&self.model))
+                    .await?
+            } else {
+                resp.json().await.map_err(|e| {
+                    llm_core::FrameworkError::provider(
+                        PROVIDER_ID.clone(),
+                        format!("failed to parse responses API reply: {e}"),
+                    )
+                })?
+            };
 
             let (message, stop_reason, usage, model) =
                 Self::parse_responses_output(&response_value)?;
@@ -863,6 +1141,7 @@ mod tests {
 
         let mut body = serde_json::Map::new();
         body.insert("store".into(), Value::Bool(false));
+        body.insert("stream".into(), Value::Bool(true));
         if let Some(instructions) = request
             .system_prompt
             .as_deref()
@@ -877,8 +1156,36 @@ mod tests {
         );
 
         assert_eq!(body["store"], false);
+        assert_eq!(body["stream"], true);
         assert_eq!(body["instructions"], "You are helpful.");
         assert_eq!(body["input"][0]["role"], "user");
+    }
+
+    #[test]
+    fn parse_responses_sse_text_aggregates_stream_events() {
+        let payload = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+            "event: response.server_model\n",
+            "data: {\"type\":\"response.server_model\",\"model\":\"gpt-5.3-codex\"}\n\n",
+            "event: response.output_item.added\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"msg_1\",\"content\":[{\"type\":\"output_text\",\"text\":\"Draft\"}]}}\n\n",
+            "event: response.output_item.done\n",
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"id\":\"msg_1\",\"content\":[{\"type\":\"output_text\",\"text\":\"Final answer\"}]}}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7}}}\n\n",
+        );
+
+        let value = OpenAiClient::parse_responses_sse_text(payload, &ModelId::new("gpt-5"))
+            .expect("parsed stream");
+        let (message, stop_reason, usage, model) =
+            OpenAiClient::parse_responses_output(&value).expect("parsed output");
+
+        assert_eq!(model.as_str(), "gpt-5.3-codex");
+        assert_eq!(message.text_content(), "Final answer");
+        assert_eq!(stop_reason, StopReason::EndTurn);
+        assert_eq!(usage.input_tokens, 11);
+        assert_eq!(usage.output_tokens, 7);
     }
 
     #[test]
