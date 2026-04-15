@@ -184,7 +184,6 @@ impl AnthropicClient {
             .header("x-stainless-os", Self::stainless_os())
             .header("x-stainless-arch", Self::stainless_arch())
             .header("Accept", "application/json")
-            .header("Accept-Encoding", "gzip, deflate, br, zstd")
             .header("Connection", "keep-alive")
     }
 
