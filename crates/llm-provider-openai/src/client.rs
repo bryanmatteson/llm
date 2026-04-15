@@ -2,7 +2,6 @@ use std::pin::Pin;
 
 use async_trait::async_trait;
 use base64::Engine;
-use reqwest::header::CONTENT_TYPE;
 use serde_json::{Value, json};
 use tokio_stream::{Stream, StreamExt};
 
@@ -781,6 +780,7 @@ impl LlmProviderClient for OpenAiClient {
                 .http
                 .post(&url)
                 .header("Authorization", self.auth_header())
+                .header("Accept", "text/event-stream")
                 .header("Content-Type", "application/json");
             if let Some(account_id) = &self.chatgpt_account_id {
                 req = req.header("ChatGPT-Account-ID", account_id);
@@ -794,23 +794,9 @@ impl LlmProviderClient for OpenAiClient {
             })?;
 
             let resp = Self::check_response(resp, &PROVIDER_ID).await?;
-            let is_event_stream = resp
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .map(|content_type| content_type.contains("text/event-stream"))
-                .unwrap_or(false);
-            let response_value = if is_event_stream {
+            let response_value =
                 Self::parse_responses_sse(resp, request.model.as_ref().unwrap_or(&self.model))
-                    .await?
-            } else {
-                resp.json().await.map_err(|e| {
-                    llm_core::FrameworkError::provider(
-                        PROVIDER_ID.clone(),
-                        format!("failed to parse responses API reply: {e}"),
-                    )
-                })?
-            };
+                    .await?;
 
             let (message, stop_reason, usage, model) =
                 Self::parse_responses_output(&response_value)?;
