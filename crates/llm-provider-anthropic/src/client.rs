@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 
@@ -41,8 +42,18 @@ const TOOL_CALLER_TOOL_ID_KEY: &str = "anthropic.caller_tool_id";
 const ADVANCED_TOOL_USE_BETA: &str = "advanced-tool-use-2025-11-20";
 const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
 const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
+const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
+const PROMPT_CACHING_SCOPE_BETA: &str = "prompt-caching-scope-2026-01-05";
+const STRUCTURED_OUTPUTS_BETA: &str = "structured-outputs-2025-12-15";
+const FAST_MODE_BETA: &str = "fast-mode-2026-02-01";
+const REDACT_THINKING_BETA: &str = "redact-thinking-2026-02-12";
+const TOKEN_EFFICIENT_TOOLS_BETA: &str = "token-efficient-tools-2026-03-28";
 const CLAUDE_CLI_USER_AGENT: &str = "claude-cli/2.1.63 (external, cli)";
+const CLAUDE_STAINLESS_PACKAGE_VERSION: &str = "0.75.0";
+const CLAUDE_STAINLESS_RUNTIME_VERSION: &str = "v24.4.0";
+const CLAUDE_VERSION: &str = "2.1.63";
+const FINGERPRINT_SALT: &str = "59cf53e54c78";
 
 impl AnthropicClient {
     /// Create a new client.
@@ -137,6 +148,19 @@ impl AnthropicClient {
             .header("x-stainless-runtime", "node")
             .header("x-stainless-lang", "js")
             .header("x-stainless-timeout", "600")
+            .header(
+                "x-stainless-package-version",
+                CLAUDE_STAINLESS_PACKAGE_VERSION,
+            )
+            .header(
+                "x-stainless-runtime-version",
+                CLAUDE_STAINLESS_RUNTIME_VERSION,
+            )
+            .header("x-stainless-os", Self::stainless_os())
+            .header("x-stainless-arch", Self::stainless_arch())
+            .header("Accept", "application/json")
+            .header("Accept-Encoding", "gzip, deflate, br, zstd")
+            .header("Connection", "keep-alive")
     }
 
     fn apply_request_headers(
@@ -159,6 +183,120 @@ impl AnthropicClient {
         } else {
             builder
         }
+    }
+
+    fn stainless_os() -> &'static str {
+        match std::env::consts::OS {
+            "macos" => "MacOS",
+            "linux" => "Linux",
+            "windows" => "Windows",
+            _ => "Unknown",
+        }
+    }
+
+    fn stainless_arch() -> &'static str {
+        match std::env::consts::ARCH {
+            "aarch64" => "arm64",
+            "x86_64" => "x64",
+            other => other,
+        }
+    }
+
+    fn prepare_body(&self, body: &MessagesRequest) -> Value {
+        let mut value = serde_json::to_value(body).unwrap_or_else(|_| json!({}));
+        if self.is_oauth_like() {
+            Self::inject_oauth_billing_header(&mut value);
+        }
+        value
+    }
+
+    fn inject_oauth_billing_header(body: &mut Value) {
+        let mut blocks = {
+            let Some(object) = body.as_object_mut() else {
+                return;
+            };
+            let blocks = Self::system_blocks_with_billing(object.get("system").cloned());
+            object.insert("system".into(), Value::Array(blocks.clone()));
+            blocks
+        };
+
+        let cch = match serde_json::to_vec(body) {
+            Ok(bytes) => Self::short_hex(&Sha256::digest(&bytes), 5),
+            Err(_) => "00000".to_string(),
+        };
+
+        if let Some(first) = blocks.first_mut().and_then(Value::as_object_mut) {
+            if let Some(text_value) = first.get_mut("text") {
+                if let Some(text) = text_value.as_str() {
+                    *text_value = Value::String(text.replace("cch=00000;", &format!("cch={cch};")));
+                }
+            }
+        }
+
+        if let Some(object) = body.as_object_mut() {
+            object.insert("system".into(), Value::Array(blocks));
+        }
+    }
+
+    fn system_blocks_with_billing(original_system: Option<Value>) -> Vec<Value> {
+        let mut blocks = match original_system {
+            Some(Value::Array(blocks)) => blocks,
+            Some(Value::String(text)) if !text.trim().is_empty() => vec![json!({
+                "type": "text",
+                "text": text,
+            })],
+            Some(value) if !value.is_null() => vec![value],
+            _ => Vec::new(),
+        };
+
+        if matches!(
+            blocks
+                .first()
+                .and_then(|value| value.get("text"))
+                .and_then(Value::as_str),
+            Some(text) if text.starts_with("x-anthropic-billing-header:")
+        ) {
+            return blocks;
+        }
+
+        let message_text = blocks
+            .iter()
+            .find_map(|value| value.get("text").and_then(Value::as_str))
+            .unwrap_or_default();
+        let build_hash = Self::build_fingerprint(message_text, CLAUDE_VERSION);
+        let header = format!(
+            "x-anthropic-billing-header: cc_version={CLAUDE_VERSION}.{build_hash}; cc_entrypoint=cli; cch=00000;"
+        );
+        blocks.insert(
+            0,
+            json!({
+                "type": "text",
+                "text": header,
+            }),
+        );
+        blocks
+    }
+
+    fn build_fingerprint(message_text: &str, version: &str) -> String {
+        let runes: Vec<char> = message_text.chars().collect();
+        let sample = [4usize, 7, 20]
+            .into_iter()
+            .map(|idx| runes.get(idx).copied().unwrap_or('0'))
+            .collect::<String>();
+        let digest = Sha256::digest(format!("{FINGERPRINT_SALT}{sample}{version}"));
+        Self::short_hex(&digest, 3)
+    }
+
+    fn short_hex(bytes: &[u8], len: usize) -> String {
+        let mut out = String::new();
+        for byte in bytes {
+            out.push_str(&format!("{byte:02x}"));
+            if out.len() >= len {
+                out.truncate(len);
+                break;
+            }
+        }
+        out
     }
 
     fn text_block(text: impl Into<String>) -> Value {
@@ -231,8 +369,21 @@ impl AnthropicClient {
         let mut betas = Vec::new();
 
         if self.is_oauth_like() {
-            betas.push(CLAUDE_CODE_BETA.to_string());
-            betas.push(OAUTH_BETA.to_string());
+            betas.extend(
+                [
+                    CLAUDE_CODE_BETA,
+                    OAUTH_BETA,
+                    INTERLEAVED_THINKING_BETA,
+                    CONTEXT_MANAGEMENT_BETA,
+                    PROMPT_CACHING_SCOPE_BETA,
+                    STRUCTURED_OUTPUTS_BETA,
+                    FAST_MODE_BETA,
+                    REDACT_THINKING_BETA,
+                    TOKEN_EFFICIENT_TOOLS_BETA,
+                ]
+                .into_iter()
+                .map(str::to_string),
+            );
         }
 
         if request.provider_request.contains_key("context_management") {
@@ -884,11 +1035,12 @@ impl LlmProviderClient for AnthropicClient {
             stream: false,
             extra_body,
         };
+        let body_json = self.prepare_body(&body);
 
         let url = self.request_url();
         let builder = self.apply_request_headers(self.http.post(&url), request);
 
-        let resp = builder.json(&body).send().await.map_err(|e| {
+        let resp = builder.json(&body_json).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
         })?;
 
@@ -953,11 +1105,12 @@ impl LlmProviderClient for AnthropicClient {
             stream: true,
             extra_body,
         };
+        let body_json = self.prepare_body(&body);
 
         let url = self.request_url();
         let builder = self.apply_request_headers(self.http.post(&url), request);
 
-        let resp = builder.json(&body).send().await.map_err(|e| {
+        let resp = builder.json(&body_json).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
         })?;
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
