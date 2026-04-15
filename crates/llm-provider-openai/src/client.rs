@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde_json::{Value, json};
 use tokio_stream::Stream;
 
@@ -34,6 +35,19 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
+    fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
+        let payload_b64 = access_token.split('.').nth(1)?;
+        let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .ok()?;
+        let claims: Value = serde_json::from_slice(&payload_bytes).ok()?;
+        claims
+            .get("https://api.openai.com/auth")?
+            .get("chatgpt_account_id")?
+            .as_str()
+            .map(str::to_string)
+    }
+
     /// Create a new client.
     ///
     /// * `auth_session` – a previously authenticated session (API-key or OAuth).
@@ -42,7 +56,11 @@ impl OpenAiClient {
     ///   explicit base URL is provided, the client automatically routes to
     ///   the ChatGPT backend API (`CHATGPT_API_BASE`).
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: impl Into<String>) -> Self {
-        let chatgpt_account_id = auth_session.metadata.get("chatgpt_account_id").cloned();
+        let chatgpt_account_id = auth_session
+            .metadata
+            .get("chatgpt_account_id")
+            .cloned()
+            .or_else(|| Self::extract_chatgpt_account_id(&auth_session.tokens.access_token));
         Self {
             http: reqwest::Client::new(),
             auth_session,
@@ -888,5 +906,25 @@ mod tests {
             }
             other => panic!("expected ToolUse, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn new_extracts_chatgpt_account_id_from_token_when_metadata_is_empty() {
+        let token = "header.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF8xMjMifX0.sig";
+        let auth_session = AuthSession {
+            provider_id: PROVIDER_ID.clone(),
+            method: AuthMethod::OAuth {
+                expires_at: chrono::Utc::now(),
+            },
+            tokens: llm_auth::TokenPair::new(token.into(), None, 3600),
+            metadata: Default::default(),
+        };
+
+        let client = OpenAiClient::new(
+            auth_session,
+            ModelId::new("gpt-5"),
+            crate::descriptor::CHATGPT_API_BASE,
+        );
+        assert_eq!(client.chatgpt_account_id.as_deref(), Some("acct_123"));
     }
 }
