@@ -327,10 +327,7 @@ impl QuestionnaireBuilder {
         sections.extend(self.sections);
 
         // Flatten all questions for backward-compat engine access.
-        let questions: Vec<Question> = sections
-            .iter()
-            .flat_map(|s| s.questions.clone())
-            .collect();
+        let questions: Vec<Question> = sections.iter().flat_map(|s| s.questions.clone()).collect();
 
         Questionnaire {
             id: self.id,

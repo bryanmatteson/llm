@@ -7,8 +7,7 @@
 //! # Phase 1: Questionnaire extensions
 
 use llm_questionnaire::{
-    AnswerValue, QuestionId, QuestionnaireBuilder, SectionId,
-    engine::QuestionnaireRun,
+    AnswerValue, QuestionId, QuestionnaireBuilder, SectionId, engine::QuestionnaireRun,
     schema::QuestionKind,
 };
 
@@ -29,8 +28,11 @@ fn test_section_builder_groups_questions() {
                 .yes_no("split_pools", "Separate pools for code vs prose?")
         })
         .section("answer", "Answer Generation", |s| {
-            s.description("Configure LLM answer provider")
-                .choice("provider", "Provider?", &["anthropic", "openai", "template"])
+            s.description("Configure LLM answer provider").choice(
+                "provider",
+                "Provider?",
+                &["anthropic", "openai", "template"],
+            )
         })
         .build();
 
@@ -98,7 +100,8 @@ fn test_info_question_not_in_answers() {
                 run.advance_info().expect("info advance should succeed");
             }
             QuestionKind::YesNo { .. } => {
-                run.submit_answer(AnswerValue::YesNo(true)).expect("valid answer");
+                run.submit_answer(AnswerValue::YesNo(true))
+                    .expect("valid answer");
             }
             _ => panic!("unexpected question kind"),
         }
@@ -137,7 +140,8 @@ fn test_conditions_across_sections() {
     let mut run = QuestionnaireRun::new(q.clone()).expect("valid schema");
     let first = run.next_question().expect("should have first question");
     assert_eq!(first.id, QuestionId::new("mode"));
-    run.submit_answer(AnswerValue::Choice("simple".into())).unwrap();
+    run.submit_answer(AnswerValue::Choice("simple".into()))
+        .unwrap();
 
     // Next question should be None (custom_endpoint is hidden)
     assert!(
@@ -147,8 +151,11 @@ fn test_conditions_across_sections() {
 
     // When mode=advanced, the advanced question should appear
     let mut run2 = QuestionnaireRun::new(q).expect("valid schema");
-    run2.submit_answer(AnswerValue::Choice("advanced".into())).unwrap();
-    let next = run2.next_question().expect("custom_endpoint should be visible");
+    run2.submit_answer(AnswerValue::Choice("advanced".into()))
+        .unwrap();
+    let next = run2
+        .next_question()
+        .expect("custom_endpoint should be visible");
     assert_eq!(next.id, QuestionId::new("custom_endpoint"));
 }
 
@@ -164,12 +171,10 @@ fn test_conditions_across_sections() {
 fn test_engine_walks_sections_in_order() {
     let q = QuestionnaireBuilder::new("ordered", "Ordered")
         .section("first", "First Section", |s| {
-            s.choice("q1", "Q1?", &["a", "b"])
-                .yes_no("q2", "Q2?")
+            s.choice("q1", "Q1?", &["a", "b"]).yes_no("q2", "Q2?")
         })
         .section("second", "Second Section", |s| {
-            s.text("q3", "Q3?")
-                .choice("q4", "Q4?", &["x", "y"])
+            s.text("q3", "Q3?").choice("q4", "Q4?", &["x", "y"])
         })
         .build();
 
@@ -180,13 +185,15 @@ fn test_engine_walks_sections_in_order() {
         let id = question.id.as_str().to_string();
         match &question.kind {
             QuestionKind::Choice { options, .. } => {
-                run.submit_answer(AnswerValue::Choice(options[0].value.clone())).unwrap();
+                run.submit_answer(AnswerValue::Choice(options[0].value.clone()))
+                    .unwrap();
             }
             QuestionKind::YesNo { .. } => {
                 run.submit_answer(AnswerValue::YesNo(true)).unwrap();
             }
             QuestionKind::Text { .. } => {
-                run.submit_answer(AnswerValue::Text(Some("test".into()))).unwrap();
+                run.submit_answer(AnswerValue::Text(Some("test".into())))
+                    .unwrap();
             }
             _ => panic!("unexpected kind"),
         }
