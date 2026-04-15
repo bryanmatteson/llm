@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_stream::{Stream, StreamExt, wrappers::ReceiverStream};
 
-use llm_auth::AuthSession;
+use llm_auth::{AuthProvider, AuthSession};
 use llm_core::{
     ContentBlock, Message, Metadata, ModelDescriptor, ModelId, ProviderId, Result, Role,
     StopReason, TokenUsage,
@@ -71,6 +71,31 @@ impl AnthropicClient {
             model,
             session_id,
         }
+    }
+
+    async fn effective_client(&self) -> Result<Self> {
+        if !self.auth_session.tokens.is_expired() {
+            return Ok(Self::new(
+                self.auth_session.clone(),
+                self.model.clone(),
+                Some(self.base_url.clone()),
+            ));
+        }
+
+        if !self.auth_session.tokens.can_refresh() {
+            return Err(llm_core::FrameworkError::auth(
+                "access token has expired; refresh or re-authenticate before making requests",
+            ));
+        }
+
+        let refreshed = crate::AnthropicAuthProvider::new()
+            .refresh(&self.auth_session)
+            .await?;
+        Ok(Self::new(
+            refreshed,
+            self.model.clone(),
+            Some(self.base_url.clone()),
+        ))
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
@@ -1006,6 +1031,13 @@ impl LlmProviderClient for AnthropicClient {
     }
 
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
+        let client = self.effective_client().await?;
+        if client.auth_session.tokens.access_token != self.auth_session.tokens.access_token
+            || client.auth_session.tokens.expires_at != self.auth_session.tokens.expires_at
+        {
+            return client.send_turn(request).await;
+        }
+
         if self.auth_session.tokens.is_expired() {
             return Err(llm_core::FrameworkError::auth(
                 "access token has expired; refresh or re-authenticate before making requests",
@@ -1076,6 +1108,13 @@ impl LlmProviderClient for AnthropicClient {
         &self,
         request: &TurnRequest,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>> {
+        let client = self.effective_client().await?;
+        if client.auth_session.tokens.access_token != self.auth_session.tokens.access_token
+            || client.auth_session.tokens.expires_at != self.auth_session.tokens.expires_at
+        {
+            return client.stream_turn(request).await;
+        }
+
         if self.auth_session.tokens.is_expired() {
             return Err(llm_core::FrameworkError::auth(
                 "access token has expired; refresh or re-authenticate before making requests",

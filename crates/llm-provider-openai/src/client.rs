@@ -5,7 +5,7 @@ use base64::Engine;
 use serde_json::{Value, json};
 use tokio_stream::{Stream, StreamExt};
 
-use llm_auth::{AuthMethod, AuthSession};
+use llm_auth::{AuthMethod, AuthProvider, AuthSession};
 use llm_core::{
     ContentBlock, Message, ModelDescriptor, ModelId, ProviderId, Result, Role, StopReason,
     TokenUsage,
@@ -106,6 +106,31 @@ impl OpenAiClient {
     /// Build the `Authorization` header value.
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.auth_session.tokens.access_token)
+    }
+
+    async fn effective_client(&self) -> Result<Self> {
+        if !self.auth_session.tokens.is_expired() {
+            return Ok(Self::new(
+                self.auth_session.clone(),
+                self.model.clone(),
+                self.base_url.clone(),
+            ));
+        }
+
+        if !self.auth_session.tokens.can_refresh() {
+            return Err(llm_core::FrameworkError::auth(
+                "access token has expired; refresh or re-authenticate before making requests",
+            ));
+        }
+
+        let refreshed = crate::OpenAiAuthProvider::new()
+            .refresh(&self.auth_session)
+            .await?;
+        Ok(Self::new(
+            refreshed,
+            self.model.clone(),
+            self.base_url.clone(),
+        ))
     }
 
     fn tool_result_to_text(value: &serde_json::Value) -> String {
@@ -521,14 +546,15 @@ impl OpenAiClient {
             if line.is_empty() {
                 if !data_lines.is_empty() {
                     let payload = data_lines.join("\n");
-                    let derived_event = serde_json::from_str::<Value>(&payload)
-                        .ok()
-                        .and_then(|value| {
-                            value
-                                .get("type")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        });
+                    let derived_event =
+                        serde_json::from_str::<Value>(&payload)
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("type")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            });
                     let event = event_name
                         .clone()
                         .or(derived_event)
@@ -729,21 +755,8 @@ impl OpenAiClient {
             format!("HTTP {status}: {body}"),
         ))
     }
-}
 
-#[async_trait]
-impl LlmProviderClient for OpenAiClient {
-    fn provider_id(&self) -> &ProviderId {
-        &self.auth_session.provider_id
-    }
-
-    async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
-        if self.auth_session.tokens.is_expired() {
-            return Err(llm_core::FrameworkError::auth(
-                "access token has expired; refresh or re-authenticate before making requests",
-            ));
-        }
-
+    async fn send_turn_inner(&self, request: &TurnRequest) -> Result<TurnResponse> {
         if self.uses_responses_api() {
             let model = request.model.as_ref().unwrap_or(&self.model).to_string();
             let mut body = serde_json::Map::new();
@@ -761,7 +774,10 @@ impl LlmProviderClient for OpenAiClient {
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
             {
-                body.insert("instructions".into(), Value::String(instructions.to_string()));
+                body.insert(
+                    "instructions".into(),
+                    Value::String(instructions.to_string()),
+                );
             }
             body.insert(
                 "input".into(),
@@ -809,10 +825,7 @@ impl LlmProviderClient for OpenAiClient {
             });
         }
 
-        // ── Build messages ──────────────────────────────────────────
         let mut wire_messages = Vec::new();
-
-        // Prepend system prompt as a system message if provided.
         if let Some(sys) = &request.system_prompt {
             wire_messages.push(WireMessage {
                 role: "system".into(),
@@ -827,9 +840,7 @@ impl LlmProviderClient for OpenAiClient {
             wire_messages.push(Self::message_to_wire(msg));
         }
 
-        // ── Build request body ──────────────────────────────────────
         let model = request.model.as_ref().unwrap_or(&self.model).to_string();
-
         let tools = if request.tools.is_empty() {
             None
         } else {
@@ -844,7 +855,6 @@ impl LlmProviderClient for OpenAiClient {
             max_tokens: request.max_tokens,
         };
 
-        // ── Send request ────────────────────────────────────────────
         let url = format!("{}/chat/completions", self.base_url);
 
         let mut req = self
@@ -868,7 +878,6 @@ impl LlmProviderClient for OpenAiClient {
             )
         })?;
 
-        // ── Parse response ──────────────────────────────────────────
         let choice = completion.choices.first().ok_or_else(|| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), "response contained no choices")
         })?;
@@ -892,22 +901,7 @@ impl LlmProviderClient for OpenAiClient {
         })
     }
 
-    async fn stream_turn(
-        &self,
-        _request: &TurnRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>> {
-        Err(llm_core::FrameworkError::unsupported(
-            "streaming is not yet implemented for the OpenAI provider",
-        ))
-    }
-
-    async fn list_models(&self) -> Result<Vec<ModelDescriptor>> {
-        if self.auth_session.tokens.is_expired() {
-            return Err(llm_core::FrameworkError::auth(
-                "access token has expired; refresh or re-authenticate before making requests",
-            ));
-        }
-
+    async fn list_models_inner(&self) -> Result<Vec<ModelDescriptor>> {
         let url = format!("{}/models", self.base_url);
 
         let mut req = self
@@ -945,6 +939,32 @@ impl LlmProviderClient for OpenAiClient {
                 metadata: Default::default(),
             })
             .collect())
+    }
+}
+
+#[async_trait]
+impl LlmProviderClient for OpenAiClient {
+    fn provider_id(&self) -> &ProviderId {
+        &self.auth_session.provider_id
+    }
+
+    async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
+        let client = self.effective_client().await?;
+        client.send_turn_inner(request).await
+    }
+
+    async fn stream_turn(
+        &self,
+        _request: &TurnRequest,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<ProviderEvent>> + Send>>> {
+        Err(llm_core::FrameworkError::unsupported(
+            "streaming is not yet implemented for the OpenAI provider",
+        ))
+    }
+
+    async fn list_models(&self) -> Result<Vec<ModelDescriptor>> {
+        let client = self.effective_client().await?;
+        client.list_models_inner().await
     }
 }
 
@@ -1138,7 +1158,10 @@ mod tests {
             .map(str::trim)
             .filter(|text| !text.is_empty())
         {
-            body.insert("instructions".into(), Value::String(instructions.to_string()));
+            body.insert(
+                "instructions".into(),
+                Value::String(instructions.to_string()),
+            );
         }
         body.insert(
             "input".into(),

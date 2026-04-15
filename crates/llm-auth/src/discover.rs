@@ -20,6 +20,7 @@ pub struct ProviderCredential {
     pub token: String,
     pub kind: CredentialKind,
     pub base_url: Option<String>,
+    pub session: Option<AuthSession>,
 }
 
 /// Describes which environment variables to probe for a single provider.
@@ -133,6 +134,7 @@ impl EnvCredentialDiscovery {
                 token,
                 kind: CredentialKind::ApiKey,
                 base_url,
+                session: None,
             });
         }
 
@@ -141,6 +143,7 @@ impl EnvCredentialDiscovery {
                 token,
                 kind: CredentialKind::BearerToken,
                 base_url,
+                session: None,
             });
         }
 
@@ -190,6 +193,12 @@ impl EnvCredentialDiscovery {
 /// API keys get a long-lived (365-day) token pair.
 /// Bearer tokens get a shorter-lived (1-hour) token pair.
 pub fn build_auth_session(provider_id: ProviderId, credential: &ProviderCredential) -> AuthSession {
+    if let Some(session) = &credential.session {
+        let mut session = session.clone();
+        session.provider_id = provider_id;
+        return session;
+    }
+
     let (method, expires_secs) = match credential.kind {
         CredentialKind::ApiKey => {
             let masked = mask_token(&credential.token);
@@ -278,6 +287,7 @@ mod tests {
             token: "sk-test-key-12345678".to_string(),
             kind: CredentialKind::ApiKey,
             base_url: None,
+            session: None,
         };
         let session = build_auth_session(ProviderId::new("openai"), &cred);
         assert_eq!(session.provider_id.as_str(), "openai");
@@ -291,10 +301,39 @@ mod tests {
             token: "ya29.bearer-token".to_string(),
             kind: CredentialKind::BearerToken,
             base_url: Some("https://custom.api.example.com".to_string()),
+            session: None,
         };
         let session = build_auth_session(ProviderId::new("google"), &cred);
         assert!(matches!(session.method, AuthMethod::Bearer { .. }));
         assert!(!session.tokens.is_expired());
+    }
+
+    #[test]
+    fn build_auth_session_preserves_discovered_oauth_session() {
+        let expires_at = chrono::Utc::now() - chrono::Duration::minutes(5);
+        let cred = ProviderCredential {
+            token: "oauth-access".to_string(),
+            kind: CredentialKind::BearerToken,
+            base_url: None,
+            session: Some(AuthSession {
+                provider_id: ProviderId::new("anthropic"),
+                method: AuthMethod::OAuth { expires_at },
+                tokens: TokenPair {
+                    access_token: "oauth-access".to_string(),
+                    refresh_token: Some("oauth-refresh".to_string()),
+                    expires_at,
+                },
+                metadata: Metadata::default(),
+            }),
+        };
+
+        let session = build_auth_session(ProviderId::new("anthropic"), &cred);
+        assert!(matches!(session.method, AuthMethod::OAuth { .. }));
+        assert_eq!(
+            session.tokens.refresh_token.as_deref(),
+            Some("oauth-refresh")
+        );
+        assert_eq!(session.tokens.expires_at, expires_at);
     }
 
     #[test]
