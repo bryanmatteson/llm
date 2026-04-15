@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
 use async_trait::async_trait;
+use serde_json::{Value, json};
 use tokio_stream::Stream;
 
 use llm_auth::{AuthMethod, AuthSession};
@@ -72,6 +73,10 @@ impl OpenAiClient {
         }
     }
 
+    fn uses_responses_api(&self) -> bool {
+        self.base_url.contains("chatgpt.com/backend-api")
+    }
+
     /// Build the `Authorization` header value.
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.auth_session.tokens.access_token)
@@ -82,6 +87,216 @@ impl OpenAiClient {
             serde_json::Value::String(text) => text.clone(),
             other => serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
         }
+    }
+
+    fn request_to_responses_input(request: &TurnRequest) -> Vec<Value> {
+        let mut input = Vec::new();
+
+        if let Some(system_prompt) = &request.system_prompt {
+            input.push(json!({
+                "type": "message",
+                "role": "developer",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": system_prompt,
+                    }
+                ],
+            }));
+        }
+
+        for msg in &request.messages {
+            input.extend(Self::message_to_responses_input(msg));
+        }
+
+        input
+    }
+
+    fn message_to_responses_input(msg: &Message) -> Vec<Value> {
+        let mut items = Vec::new();
+
+        let role = match msg.role {
+            Role::System => "developer",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "",
+        };
+
+        let text_items: Vec<Value> = msg
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) if !text.is_empty() => Some(json!({
+                    "type": "input_text",
+                    "text": text,
+                })),
+                _ => None,
+            })
+            .collect();
+
+        if !text_items.is_empty() && msg.role != Role::Tool {
+            items.push(json!({
+                "type": "message",
+                "role": role,
+                "content": text_items,
+            }));
+        }
+
+        for block in &msg.content {
+            match block {
+                ContentBlock::ToolUse { id, name, input } => {
+                    items.push(json!({
+                        "type": "function_call",
+                        "call_id": id,
+                        "name": name,
+                        "arguments": serde_json::to_string(input).unwrap_or_default(),
+                    }));
+                }
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } => {
+                    items.push(json!({
+                        "type": "function_call_output",
+                        "call_id": tool_use_id,
+                        "output": Self::tool_result_to_text(content),
+                    }));
+                }
+                ContentBlock::Text(_) => {}
+            }
+        }
+
+        items
+    }
+
+    fn responses_tools(tools: &[Value]) -> Vec<Value> {
+        tools
+            .iter()
+            .map(|tool| {
+                if let Some(function) = tool.get("function") {
+                    json!({
+                        "type": "function",
+                        "name": function.get("name").and_then(Value::as_str).unwrap_or_default(),
+                        "description": function.get("description").and_then(Value::as_str).unwrap_or_default(),
+                        "parameters": function.get("parameters").cloned().unwrap_or_else(|| json!({})),
+                    })
+                } else {
+                    tool.clone()
+                }
+            })
+            .collect()
+    }
+
+    fn parse_responses_message(item: &Value) -> Vec<ContentBlock> {
+        item.get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(
+                |content| match content.get("type").and_then(Value::as_str) {
+                    Some("output_text") | Some("input_text") => content
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(|text| ContentBlock::Text(text.to_string())),
+                    _ => None,
+                },
+            )
+            .collect()
+    }
+
+    fn parse_responses_output(value: &Value) -> Result<(Message, StopReason, TokenUsage, ModelId)> {
+        let output = value
+            .get("output")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                llm_core::FrameworkError::provider(
+                    PROVIDER_ID.clone(),
+                    "responses API reply did not include an output array",
+                )
+            })?;
+
+        let mut content = Vec::new();
+        let mut saw_tool_use = false;
+
+        for item in output {
+            match item.get("type").and_then(Value::as_str) {
+                Some("message") => content.extend(Self::parse_responses_message(item)),
+                Some("function_call") => {
+                    let id = item
+                        .get("call_id")
+                        .or_else(|| item.get("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            llm_core::FrameworkError::provider(
+                                PROVIDER_ID.clone(),
+                                "responses API function_call item missing call_id",
+                            )
+                        })?;
+                    let name = item.get("name").and_then(Value::as_str).ok_or_else(|| {
+                        llm_core::FrameworkError::provider(
+                            PROVIDER_ID.clone(),
+                            "responses API function_call item missing name",
+                        )
+                    })?;
+                    let arguments = item
+                        .get("arguments")
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}");
+                    let input = serde_json::from_str(arguments).unwrap_or_default();
+                    content.push(ContentBlock::ToolUse {
+                        id: id.to_string(),
+                        name: name.to_string(),
+                        input,
+                    });
+                    saw_tool_use = true;
+                }
+                _ => {}
+            }
+        }
+
+        let usage = value
+            .get("usage")
+            .and_then(Value::as_object)
+            .map(|usage| TokenUsage {
+                input_tokens: usage
+                    .get("input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                output_tokens: usage
+                    .get("output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+            })
+            .unwrap_or_default();
+
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .map(ModelId::new)
+            .unwrap_or_else(|| ModelId::new("unknown"));
+
+        let stop_reason = if saw_tool_use {
+            StopReason::ToolUse
+        } else if value
+            .pointer("/incomplete_details/reason")
+            .and_then(Value::as_str)
+            == Some("max_output_tokens")
+        {
+            StopReason::MaxTokens
+        } else {
+            StopReason::EndTurn
+        };
+
+        Ok((
+            Message {
+                role: Role::Assistant,
+                content,
+                metadata: Default::default(),
+            },
+            stop_reason,
+            usage,
+            model,
+        ))
     }
 
     /// Convert a canonical [`Message`] to the OpenAI wire format.
@@ -257,6 +472,64 @@ impl LlmProviderClient for OpenAiClient {
             return Err(llm_core::FrameworkError::auth(
                 "access token has expired; refresh or re-authenticate before making requests",
             ));
+        }
+
+        if self.uses_responses_api() {
+            let model = request.model.as_ref().unwrap_or(&self.model).to_string();
+            let mut body = serde_json::Map::new();
+            body.insert("model".into(), Value::String(model));
+            body.insert(
+                "input".into(),
+                Value::Array(Self::request_to_responses_input(request)),
+            );
+            if let Some(temperature) = request.temperature {
+                body.insert("temperature".into(), json!(temperature));
+            }
+            if let Some(max_tokens) = request.max_tokens {
+                body.insert("max_output_tokens".into(), json!(max_tokens));
+            }
+            if !request.tools.is_empty() {
+                body.insert(
+                    "tools".into(),
+                    Value::Array(Self::responses_tools(&request.tools)),
+                );
+            }
+
+            let url = format!("{}/responses", self.base_url);
+
+            let mut req = self
+                .http
+                .post(&url)
+                .header("Authorization", self.auth_header())
+                .header("Content-Type", "application/json");
+            if let Some(account_id) = &self.chatgpt_account_id {
+                req = req.header("ChatGPT-Account-ID", account_id);
+            }
+
+            let resp = req.json(&body).send().await.map_err(|e| {
+                llm_core::FrameworkError::provider(
+                    PROVIDER_ID.clone(),
+                    format!("responses request failed: {e}"),
+                )
+            })?;
+
+            let resp = Self::check_response(resp, &PROVIDER_ID).await?;
+            let response_value: Value = resp.json().await.map_err(|e| {
+                llm_core::FrameworkError::provider(
+                    PROVIDER_ID.clone(),
+                    format!("failed to parse responses API reply: {e}"),
+                )
+            })?;
+
+            let (message, stop_reason, usage, model) =
+                Self::parse_responses_output(&response_value)?;
+
+            return Ok(TurnResponse {
+                messages: vec![message],
+                stop_reason,
+                model,
+                usage,
+            });
         }
 
         // ── Build messages ──────────────────────────────────────────
@@ -541,5 +814,79 @@ mod tests {
             ModelId::new("gpt-4o"),
         );
         assert_eq!(client.base_url, crate::descriptor::CHATGPT_API_BASE);
+    }
+
+    #[test]
+    fn request_to_responses_input_uses_typed_message_items() {
+        let request = TurnRequest {
+            system_prompt: Some("You are helpful.".into()),
+            messages: vec![Message::user("Plan this repo.")],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: Some(ModelId::new("gpt-5")),
+            max_tokens: Some(128),
+            temperature: Some(0.2),
+        };
+
+        let input = OpenAiClient::request_to_responses_input(&request);
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "developer");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "You are helpful.");
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["role"], "user");
+        assert_eq!(input[1]["content"][0]["text"], "Plan this repo.");
+    }
+
+    #[test]
+    fn parse_responses_output_extracts_text_and_tool_calls() {
+        let response = json!({
+            "model": "gpt-5.3-codex",
+            "usage": {
+                "input_tokens": 12,
+                "output_tokens": 7
+            },
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "First,"
+                        },
+                        {
+                            "type": "output_text",
+                            "text": " second."
+                        }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_123",
+                    "name": "search",
+                    "arguments": "{\"q\":\"router\"}"
+                }
+            ]
+        });
+
+        let (message, stop_reason, usage, model) =
+            OpenAiClient::parse_responses_output(&response).expect("parsed response");
+
+        assert_eq!(model.as_str(), "gpt-5.3-codex");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 7);
+        assert_eq!(stop_reason, StopReason::ToolUse);
+        assert_eq!(message.role, Role::Assistant);
+        assert_eq!(message.text_content(), "First, second.");
+        match &message.content[2] {
+            ContentBlock::ToolUse { id, name, input } => {
+                assert_eq!(id, "call_123");
+                assert_eq!(name, "search");
+                assert_eq!(input["q"], "router");
+            }
+            other => panic!("expected ToolUse, got {other:?}"),
+        }
     }
 }
