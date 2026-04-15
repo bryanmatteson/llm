@@ -24,6 +24,26 @@ pub fn code_execution_tool(tool_type: &str) -> Value {
 /// ```
 pub struct AnthropicToolFormat;
 
+fn reverse_oauth_tool_name(name: &str) -> &str {
+    match name {
+        "Bash" => "bash",
+        "Read" => "read",
+        "Write" => "write",
+        "Edit" => "edit",
+        "Glob" => "glob",
+        "Grep" => "grep",
+        "Task" => "task",
+        "WebFetch" => "webfetch",
+        "TodoWrite" => "todowrite",
+        "Question" => "question",
+        "Skill" => "skill",
+        "LS" => "ls",
+        "TodoRead" => "todoread",
+        "NotebookEdit" => "notebookedit",
+        _ => name,
+    }
+}
+
 impl ToolSchemaAdapter for AnthropicToolFormat {
     /// Convert provider-agnostic tool descriptors into the Anthropic
     /// `tools` array format:
@@ -79,7 +99,7 @@ impl ToolSchemaAdapter for AnthropicToolFormat {
                     return None;
                 }
                 let id = block.get("id")?.as_str()?.to_owned();
-                let name = block.get("name")?.as_str()?.to_owned();
+                let name = reverse_oauth_tool_name(block.get("name")?.as_str()?).to_owned();
                 let arguments = block
                     .get("input")
                     .cloned()

@@ -4,6 +4,7 @@ use llm_auth::{
     redirect_uri_for,
 };
 use llm_core::{FrameworkError, Metadata, ProviderId};
+use serde_json::json;
 
 use crate::descriptor::{ANTHROPIC_CLIENT_ID, PROVIDER_ID};
 
@@ -27,6 +28,30 @@ fn anthropic_endpoints() -> OAuthEndpoints {
         extra_auth_params: &[("code", "true")],
         state_is_verifier: true,
     }
+}
+
+fn authorization_code_payload(
+    code: &str,
+    redirect_uri: &str,
+    code_verifier: &str,
+    state: &str,
+) -> serde_json::Value {
+    json!({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "client_id": ANTHROPIC_CLIENT_ID,
+        "code_verifier": code_verifier,
+        "state": state,
+    })
+}
+
+fn refresh_token_payload(refresh_token: &str) -> serde_json::Value {
+    json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": ANTHROPIC_CLIENT_ID,
+    })
 }
 
 /// Authentication provider for Anthropic.
@@ -164,14 +189,14 @@ impl AuthProvider for AnthropicAuthProvider {
         let token_resp: OAuthTokenResponse = self
             .http
             .post(endpoints.token_url)
-            .form(&[
-                ("grant_type", "authorization_code"),
-                ("code", code),
-                ("redirect_uri", &redirect_uri),
-                ("client_id", ANTHROPIC_CLIENT_ID),
-                ("code_verifier", &pkce.verifier),
-                ("state", state),
-            ])
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .json(&authorization_code_payload(
+                code,
+                &redirect_uri,
+                &pkce.verifier,
+                state,
+            ))
             .send()
             .await
             .map_err(|e| FrameworkError::auth(format!("token exchange request failed: {e}")))?
@@ -218,11 +243,9 @@ impl AuthProvider for AnthropicAuthProvider {
         let token_resp: OAuthTokenResponse = self
             .http
             .post(endpoints.token_url)
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-                ("client_id", ANTHROPIC_CLIENT_ID),
-            ])
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .json(&refresh_token_payload(refresh_token))
             .send()
             .await
             .map_err(|e| FrameworkError::auth(format!("refresh request failed: {e}")))?
@@ -254,5 +277,45 @@ impl AuthProvider for AnthropicAuthProvider {
 
     async fn validate(&self, session: &AuthSession) -> Result<bool, FrameworkError> {
         Ok(!session.tokens.is_expired())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_oauth_endpoints_match_claude_flow() {
+        let endpoints = anthropic_endpoints();
+        assert_eq!(endpoints.auth_url, "https://claude.ai/oauth/authorize");
+        assert_eq!(
+            endpoints.token_url,
+            "https://api.anthropic.com/v1/oauth/token"
+        );
+        assert!(endpoints.state_is_verifier);
+    }
+
+    #[test]
+    fn authorization_code_payload_uses_json_body() {
+        let payload = authorization_code_payload(
+            "code-123",
+            "http://localhost:1234/callback",
+            "verifier-xyz",
+            "state-abc",
+        );
+        assert_eq!(payload["grant_type"], "authorization_code");
+        assert_eq!(payload["code"], "code-123");
+        assert_eq!(payload["redirect_uri"], "http://localhost:1234/callback");
+        assert_eq!(payload["client_id"], ANTHROPIC_CLIENT_ID);
+        assert_eq!(payload["code_verifier"], "verifier-xyz");
+        assert_eq!(payload["state"], "state-abc");
+    }
+
+    #[test]
+    fn refresh_token_payload_uses_json_body() {
+        let payload = refresh_token_payload("refresh-123");
+        assert_eq!(payload["grant_type"], "refresh_token");
+        assert_eq!(payload["refresh_token"], "refresh-123");
+        assert_eq!(payload["client_id"], ANTHROPIC_CLIENT_ID);
     }
 }

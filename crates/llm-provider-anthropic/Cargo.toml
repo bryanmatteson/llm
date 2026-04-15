@@ -10,10 +10,14 @@ llm-auth = { workspace = true }
 llm-tools = { workspace = true }
 llm-provider-api = { workspace = true }
 async-trait = { workspace = true }
+brotli = "8"
 chrono = { workspace = true }
+flate2 = "1"
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+zstd = "0.13"
