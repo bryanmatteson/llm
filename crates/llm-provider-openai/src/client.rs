@@ -110,19 +110,6 @@ impl OpenAiClient {
     fn request_to_responses_input(request: &TurnRequest) -> Vec<Value> {
         let mut input = Vec::new();
 
-        if let Some(system_prompt) = &request.system_prompt {
-            input.push(json!({
-                "type": "message",
-                "role": "developer",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": system_prompt,
-                    }
-                ],
-            }));
-        }
-
         for msg in &request.messages {
             input.extend(Self::message_to_responses_input(msg));
         }
@@ -496,6 +483,14 @@ impl LlmProviderClient for OpenAiClient {
             let model = request.model.as_ref().unwrap_or(&self.model).to_string();
             let mut body = serde_json::Map::new();
             body.insert("model".into(), Value::String(model));
+            if let Some(instructions) = request
+                .system_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            {
+                body.insert("instructions".into(), Value::String(instructions.to_string()));
+            }
             body.insert(
                 "input".into(),
                 Value::Array(Self::request_to_responses_input(request)),
@@ -847,14 +842,40 @@ mod tests {
         };
 
         let input = OpenAiClient::request_to_responses_input(&request);
-        assert_eq!(input.len(), 2);
+        assert_eq!(input.len(), 1);
         assert_eq!(input[0]["type"], "message");
-        assert_eq!(input[0]["role"], "developer");
-        assert_eq!(input[0]["content"][0]["type"], "input_text");
-        assert_eq!(input[0]["content"][0]["text"], "You are helpful.");
-        assert_eq!(input[1]["type"], "message");
-        assert_eq!(input[1]["role"], "user");
-        assert_eq!(input[1]["content"][0]["text"], "Plan this repo.");
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["text"], "Plan this repo.");
+    }
+
+    #[test]
+    fn responses_api_body_uses_top_level_instructions() {
+        let request = TurnRequest {
+            system_prompt: Some("You are helpful.".into()),
+            messages: vec![Message::user("Plan this repo.")],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: Some(ModelId::new("gpt-5")),
+            max_tokens: Some(128),
+            temperature: Some(0.2),
+        };
+
+        let mut body = serde_json::Map::new();
+        if let Some(instructions) = request
+            .system_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            body.insert("instructions".into(), Value::String(instructions.to_string()));
+        }
+        body.insert(
+            "input".into(),
+            Value::Array(OpenAiClient::request_to_responses_input(&request)),
+        );
+
+        assert_eq!(body["instructions"], "You are helpful.");
+        assert_eq!(body["input"][0]["role"], "user");
     }
 
     #[test]
