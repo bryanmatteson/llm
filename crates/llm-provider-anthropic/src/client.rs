@@ -322,6 +322,7 @@ impl AnthropicClient {
         let mut value = serde_json::to_value(body).unwrap_or_else(|_| json!({}));
         if self.is_oauth_like() {
             Self::apply_claude_oauth_system_prompt(&mut value);
+            Self::inject_fake_user_id(&mut value, &self.auth_session.tokens.access_token);
         }
         Self::disable_thinking_if_tool_choice_forced(&mut value);
         Self::normalize_temperature_for_thinking(&mut value);
@@ -869,6 +870,93 @@ impl AnthropicClient {
         }
 
         "Use the available tools when needed to help with software engineering tasks.\nKeep responses concise and focused on the user's request.\nPrefer acting on the user's task over describing product-specific workflows.".to_string()
+    }
+
+    fn inject_fake_user_id(value: &mut Value, seed: &str) {
+        let Some(root) = value.as_object_mut() else {
+            return;
+        };
+
+        let metadata = root
+            .entry("metadata")
+            .or_insert_with(|| Value::Object(Default::default()));
+        let Some(metadata) = metadata.as_object_mut() else {
+            return;
+        };
+
+        let existing = metadata
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if Self::is_valid_fake_user_id(existing) {
+            return;
+        }
+
+        metadata.insert("user_id".into(), Value::String(Self::fake_user_id(seed)));
+    }
+
+    fn fake_user_id(seed: &str) -> String {
+        let user_digest = Sha256::digest(format!("anthropic-user:{seed}"));
+        let account_digest = Sha256::digest(format!("anthropic-account:{seed}"));
+        let session_digest = Sha256::digest(format!("anthropic-session:{seed}"));
+
+        format!(
+            "user_{}_account_{}_session_{}",
+            user_digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            Self::uuid_like_from_bytes(&account_digest[..16]),
+            Self::uuid_like_from_bytes(&session_digest[..16]),
+        )
+    }
+
+    fn uuid_like_from_bytes(bytes: &[u8]) -> String {
+        let parts = [
+            &bytes[0..4],
+            &bytes[4..6],
+            &bytes[6..8],
+            &bytes[8..10],
+            &bytes[10..16],
+        ];
+
+        parts
+            .iter()
+            .map(|part| {
+                part.iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+
+    fn is_valid_fake_user_id(value: &str) -> bool {
+        let Some(rest) = value.strip_prefix("user_") else {
+            return false;
+        };
+        let Some((user_hex, rest)) = rest.split_once("_account_") else {
+            return false;
+        };
+        let Some((account, session)) = rest.split_once("_session_") else {
+            return false;
+        };
+
+        user_hex.len() == 64
+            && user_hex.chars().all(|ch| ch.is_ascii_hexdigit())
+            && Self::is_uuid_like(account)
+            && Self::is_uuid_like(session)
+    }
+
+    fn is_uuid_like(value: &str) -> bool {
+        let parts: Vec<&str> = value.split('-').collect();
+        parts.len() == 5
+            && [8usize, 4, 4, 4, 12]
+                .into_iter()
+                .zip(parts)
+                .all(|(expected, part)| {
+                    part.len() == expected && part.chars().all(|ch| ch.is_ascii_hexdigit())
+                })
     }
 
     fn prepend_to_first_user_message(root: &mut serde_json::Map<String, Value>, text: String) {
@@ -2512,5 +2600,59 @@ mod tests {
 
         let decoded = AnthropicClient::decode_response_bytes(&compressed, None);
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn fake_user_id_is_deterministic_and_valid() {
+        let first = AnthropicClient::fake_user_id("seed-token");
+        let second = AnthropicClient::fake_user_id("seed-token");
+        assert_eq!(first, second);
+        assert!(AnthropicClient::is_valid_fake_user_id(&first));
+    }
+
+    #[test]
+    fn inject_fake_user_id_preserves_existing_valid_value() {
+        let existing = AnthropicClient::fake_user_id("existing-seed");
+        let mut payload = json!({
+            "metadata": {
+                "user_id": existing.clone()
+            }
+        });
+
+        AnthropicClient::inject_fake_user_id(&mut payload, "new-seed");
+        assert_eq!(payload["metadata"]["user_id"], existing);
+    }
+
+    #[test]
+    fn prepare_body_injects_fake_user_id_for_oauth() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body);
+        let user_id = prepared.body["metadata"]["user_id"]
+            .as_str()
+            .expect("oauth metadata.user_id");
+        assert!(AnthropicClient::is_valid_fake_user_id(user_id));
     }
 }
