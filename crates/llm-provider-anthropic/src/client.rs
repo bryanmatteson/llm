@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
+use std::hash::{Hash, Hasher};
 use std::pin::Pin;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -26,6 +28,7 @@ pub struct AnthropicClient {
     auth_session: AuthSession,
     base_url: String,
     model: ModelId,
+    session_id: String,
 }
 
 const RAW_CONTENT_METADATA_KEY: &str = "anthropic.raw_content_json";
@@ -36,8 +39,10 @@ const CONTEXT_MANAGEMENT_METADATA_KEY: &str = "anthropic.context_management_json
 const TOOL_CALLER_TYPE_KEY: &str = "anthropic.caller_type";
 const TOOL_CALLER_TOOL_ID_KEY: &str = "anthropic.caller_tool_id";
 const ADVANCED_TOOL_USE_BETA: &str = "advanced-tool-use-2025-11-20";
+const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
 const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
+const CLAUDE_CLI_USER_AGENT: &str = "claude-cli/2.1.63 (external, cli)";
 
 impl AnthropicClient {
     /// Create a new client.
@@ -47,11 +52,13 @@ impl AnthropicClient {
     /// * `base_url`     - optional API base URL override. If `None`, uses the
     ///   default Anthropic API base.
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: Option<String>) -> Self {
+        let session_id = Self::session_id(&auth_session);
         Self {
             http: reqwest::Client::new(),
             auth_session,
             base_url: base_url.unwrap_or_else(|| API_BASE.to_string()),
             model,
+            session_id,
         }
     }
 
@@ -70,6 +77,87 @@ impl AnthropicClient {
             AuthMethod::OAuth { .. } | AuthMethod::Bearer { .. } => {
                 builder.bearer_auth(&self.auth_session.tokens.access_token)
             }
+        }
+    }
+
+    fn is_oauth_like(&self) -> bool {
+        matches!(
+            self.auth_session.method,
+            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. }
+        )
+    }
+
+    fn request_url(&self) -> String {
+        let base = self.base_url.trim_end_matches('/');
+        if self.is_oauth_like() {
+            format!("{base}/messages?beta=true")
+        } else {
+            format!("{base}/messages")
+        }
+    }
+
+    fn session_id(auth_session: &AuthSession) -> String {
+        Self::pseudo_uuid(&auth_session.tokens.access_token)
+    }
+
+    fn request_id(&self) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        Self::pseudo_uuid(&format!("{}:{nanos}", self.session_id))
+    }
+
+    fn pseudo_uuid(seed: &str) -> String {
+        let mut first = std::collections::hash_map::DefaultHasher::new();
+        seed.hash(&mut first);
+        let a = first.finish();
+
+        let mut second = std::collections::hash_map::DefaultHasher::new();
+        format!("{seed}:secondary").hash(&mut second);
+        let b = second.finish();
+
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            (a >> 32) as u32,
+            (a >> 16) as u16,
+            a as u16,
+            (b >> 48) as u16,
+            b & 0x0000_FFFF_FFFF_FFFF
+        )
+    }
+
+    fn apply_oauth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        builder
+            .header("x-app", "cli")
+            .header("user-agent", CLAUDE_CLI_USER_AGENT)
+            .header("x-claude-code-session-id", &self.session_id)
+            .header("x-client-request-id", self.request_id())
+            .header("x-stainless-retry-count", "0")
+            .header("x-stainless-runtime", "node")
+            .header("x-stainless-lang", "js")
+            .header("x-stainless-timeout", "600")
+    }
+
+    fn apply_request_headers(
+        &self,
+        builder: reqwest::RequestBuilder,
+        request: &TurnRequest,
+    ) -> reqwest::RequestBuilder {
+        let builder = builder
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json");
+        let betas = self.beta_headers(request);
+        let builder = if betas.is_empty() {
+            builder
+        } else {
+            builder.header("anthropic-beta", betas.join(","))
+        };
+        let builder = self.apply_auth(builder);
+        if self.is_oauth_like() {
+            self.apply_oauth_headers(builder)
+        } else {
+            builder
         }
     }
 
@@ -142,11 +230,8 @@ impl AnthropicClient {
     fn beta_headers(&self, request: &TurnRequest) -> Vec<String> {
         let mut betas = Vec::new();
 
-        // OAuth authentication requires the oauth beta header.
-        if matches!(
-            self.auth_session.method,
-            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. }
-        ) {
+        if self.is_oauth_like() {
+            betas.push(CLAUDE_CODE_BETA.to_string());
             betas.push(OAUTH_BETA.to_string());
         }
 
@@ -800,21 +885,8 @@ impl LlmProviderClient for AnthropicClient {
             extra_body,
         };
 
-        let url = format!("{}/messages", self.base_url.trim_end_matches('/'));
-
-        let builder = self
-            .http
-            .post(&url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json");
-        let betas = self.beta_headers(request);
-        let builder = if betas.is_empty() {
-            builder
-        } else {
-            builder.header("anthropic-beta", betas.join(","))
-        };
-
-        let builder = self.apply_auth(builder);
+        let url = self.request_url();
+        let builder = self.apply_request_headers(self.http.post(&url), request);
 
         let resp = builder.json(&body).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
@@ -882,20 +954,8 @@ impl LlmProviderClient for AnthropicClient {
             extra_body,
         };
 
-        let url = format!("{}/messages", self.base_url.trim_end_matches('/'));
-
-        let builder = self
-            .http
-            .post(&url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json");
-        let betas = self.beta_headers(request);
-        let builder = if betas.is_empty() {
-            builder
-        } else {
-            builder.header("anthropic-beta", betas.join(","))
-        };
-        let builder = self.apply_auth(builder);
+        let url = self.request_url();
+        let builder = self.apply_request_headers(self.http.post(&url), request);
 
         let resp = builder.json(&body).send().await.map_err(|e| {
             llm_core::FrameworkError::provider(PROVIDER_ID.clone(), format!("request failed: {e}"))
@@ -939,10 +999,20 @@ impl LlmProviderClient for AnthropicClient {
 
 #[cfg(test)]
 mod tests {
+    use llm_auth::{AuthMethod, AuthSession, TokenPair};
     use llm_core::ContentBlock;
     use serde_json::json;
 
     use super::*;
+
+    fn test_auth_session(method: AuthMethod) -> AuthSession {
+        AuthSession {
+            provider_id: PROVIDER_ID.clone(),
+            method,
+            tokens: TokenPair::new("test-token".to_string(), None, 3600),
+            metadata: Metadata::new(),
+        }
+    }
 
     #[test]
     fn message_to_wire_user() {
@@ -1126,5 +1196,59 @@ mod tests {
             StopReason::Stop
         );
         assert_eq!(AnthropicClient::map_stop_reason(None), StopReason::EndTurn);
+    }
+
+    #[test]
+    fn oauth_sessions_use_beta_messages_endpoint() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+
+        assert_eq!(
+            client.request_url(),
+            "https://api.anthropic.com/v1/messages?beta=true"
+        );
+    }
+
+    #[test]
+    fn api_key_sessions_use_plain_messages_endpoint() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::ApiKey {
+                masked: "test".to_string(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+
+        assert_eq!(
+            client.request_url(),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn oauth_beta_headers_include_claude_compat_beta() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::Bearer { expires_at: None }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = TurnRequest {
+            system_prompt: None,
+            messages: vec![Message::user("hi")],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: None,
+            max_tokens: None,
+            temperature: None,
+        };
+
+        let betas = client.beta_headers(&request);
+        assert!(betas.iter().any(|beta| beta == CLAUDE_CODE_BETA));
+        assert!(betas.iter().any(|beta| beta == OAUTH_BETA));
     }
 }
