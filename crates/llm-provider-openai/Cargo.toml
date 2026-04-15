@@ -10,6 +10,7 @@ llm-auth = { workspace = true }
 llm-provider-api = { workspace = true }
 llm-tools = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -47,4 +47,9 @@ pub struct OAuthTokenResponse {
 
     #[serde(default)]
     pub token_type: Option<String>,
+
+    /// OpenID Connect ID token (JWT). Present when the `openid` scope is
+    /// requested. Contains identity claims such as email and account IDs.
+    #[serde(default)]
+    pub id_token: Option<String>,
 }

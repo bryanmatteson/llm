@@ -8,8 +8,11 @@ pub static PROVIDER_ID: LazyLock<ProviderId> = LazyLock::new(|| ProviderId::new(
 /// The default model to use when none is specified.
 pub static DEFAULT_MODEL: LazyLock<ModelId> = LazyLock::new(|| ModelId::new("gpt-4o-mini"));
 
-/// Base URL for the OpenAI REST API.
+/// Base URL for the OpenAI REST API (used with API-key authentication).
 pub const API_BASE: &str = "https://api.openai.com/v1";
+
+/// Base URL for the ChatGPT backend API (used with OAuth authentication).
+pub const CHATGPT_API_BASE: &str = "https://chatgpt.com/backend-api/codex";
 
 /// The OAuth client-id registered for this application with OpenAI.
 pub const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";

@@ -19,12 +19,17 @@ use crate::wire::{
 /// OpenAI-specific LLM client.
 ///
 /// Wraps an HTTP client and an authenticated session to talk to the OpenAI
-/// Chat Completions and Models APIs.
+/// Chat Completions and Models APIs.  When the session was established via
+/// OAuth the client automatically targets the ChatGPT backend API and
+/// includes the required `ChatGPT-Account-ID` header.
 pub struct OpenAiClient {
     http: reqwest::Client,
     auth_session: AuthSession,
     base_url: String,
     model: ModelId,
+    /// ChatGPT account ID extracted from the OAuth access-token JWT.
+    /// When present, every request includes a `ChatGPT-Account-ID` header.
+    chatgpt_account_id: Option<String>,
 }
 
 impl OpenAiClient {
@@ -32,13 +37,19 @@ impl OpenAiClient {
     ///
     /// * `auth_session` – a previously authenticated session (API-key or OAuth).
     /// * `model`        – the model id to use (e.g. `"gpt-4o"`).
-    /// * `base_url`     – the API base URL (typically `https://api.openai.com/v1`).
+    /// * `base_url`     – the API base URL (typically `https://api.openai.com/v1`
+    ///   for API-key auth, or `https://chatgpt.com/backend-api/codex` for OAuth).
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: impl Into<String>) -> Self {
+        let chatgpt_account_id = auth_session
+            .metadata
+            .get("chatgpt_account_id")
+            .cloned();
         Self {
             http: reqwest::Client::new(),
             auth_session,
             base_url: base_url.into(),
             model,
+            chatgpt_account_id,
         }
     }
 
@@ -259,11 +270,15 @@ impl LlmProviderClient for OpenAiClient {
         // ── Send request ────────────────────────────────────────────
         let url = format!("{}/chat/completions", self.base_url);
 
-        let resp = self
+        let mut req = self
             .http
             .post(&url)
             .header("Authorization", self.auth_header())
-            .header("Content-Type", "application/json")
+            .header("Content-Type", "application/json");
+        if let Some(account_id) = &self.chatgpt_account_id {
+            req = req.header("ChatGPT-Account-ID", account_id);
+        }
+        let resp = req
             .json(&body)
             .send()
             .await
@@ -325,10 +340,14 @@ impl LlmProviderClient for OpenAiClient {
 
         let url = format!("{}/models", self.base_url);
 
-        let resp = self
+        let mut req = self
             .http
             .get(&url)
-            .header("Authorization", self.auth_header())
+            .header("Authorization", self.auth_header());
+        if let Some(account_id) = &self.chatgpt_account_id {
+            req = req.header("ChatGPT-Account-ID", account_id);
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| {

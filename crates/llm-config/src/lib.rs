@@ -6,7 +6,7 @@ pub mod tool;
 
 pub use app::LlmConfig;
 pub use loader::ConfigLoader;
-pub use provider::{AuthMode, ProviderConfig};
+pub use provider::{AuthConfig, AuthMode, ProviderConfig};
 pub use session::SessionDefaults;
 pub use tool::ToolPolicyConfig;
 
@@ -16,30 +16,29 @@ mod tests {
 
     /// Canonical KDL surface for the LLM framework.
     ///
-    /// - Identity is positional (`provider "openai"`, `tool-policy "web_search"`)
-    /// - `auth-mode` is an inline discriminator (what kind of provider)
-    /// - Provider settings are value children (display-name, base-url, etc.)
-    /// - `system-prompt` is a value child (can be multi-paragraph)
-    /// - `allow` / `forbid` are explicit, required flags on tool-policy
+    /// - Identity is positional (`provider openai`, `tool-policy "web_search"`)
+    /// - `auth` is a child node with `mode=` discriminator
+    /// - `model` is a value child
+    /// - `session-file` on `auth` is optional (defaults to `<provider>-<name>`)
     /// - `deny_unknown` on all structs
     const SAMPLE_KDL: &str = r#"
 llm default-provider="openai" {
-    provider "openai" auth-mode="api-key" {
-        display-name "OpenAI"
-        default-model "gpt-4o"
+    auth-dir "~/.llm-auth"
+
+    provider openai name="session-gpt" {
+        auth mode=api-key env-var="OPENAI_API_KEY"
+        model "gpt-4o"
         base-url "https://api.openai.com/v1"
-        api-key-env-var "OPENAI_API_KEY"
     }
 
-    provider "anthropic" auth-mode="api-key" {
-        display-name "Anthropic"
-        default-model "claude-sonnet-4-20250514"
-        api-key-env-var "ANTHROPIC_API_KEY"
+    provider anthropic name="session-claude" {
+        auth mode=api-key env-var="ANTHROPIC_API_KEY"
+        model "claude-sonnet-4-20250514"
     }
 
-    provider "google" auth-mode="oauth" {
-        display-name "Google"
-        default-model "gemini-2.5-flash"
+    provider google name="session-gemini" {
+        auth mode=oauth
+        model "gemini-2.5-flash"
     }
 
     session-defaults max-turns=20 tool-confirmation-required {
@@ -61,19 +60,26 @@ llm default-provider="openai" {
             Some("openai")
         );
 
+        // Auth dir
+        assert_eq!(
+            config.auth_dir.as_ref().map(|p| p.to_str().unwrap()),
+            Some("~/.llm-auth")
+        );
+
         // Providers
         assert_eq!(config.providers.len(), 3);
         assert_eq!(config.providers[0].id.as_str(), "openai");
-        assert_eq!(config.providers[0].display_name, "OpenAI");
+        assert_eq!(config.providers[0].name.as_deref(), Some("session-gpt"));
         assert_eq!(
-            config.providers[0].auth_mode,
+            config.providers[0].auth.mode,
             crate::provider::AuthMode::ApiKey
         );
         assert_eq!(
-            config.providers[0]
-                .default_model
-                .as_ref()
-                .map(|m| m.as_str()),
+            config.providers[0].auth.env_var.as_deref(),
+            Some("OPENAI_API_KEY")
+        );
+        assert_eq!(
+            config.providers[0].model.as_ref().map(|m| m.as_str()),
             Some("gpt-4o")
         );
         assert_eq!(
@@ -82,10 +88,12 @@ llm default-provider="openai" {
         );
 
         assert_eq!(config.providers[1].id.as_str(), "anthropic");
+        assert_eq!(config.providers[1].name.as_deref(), Some("session-claude"));
         assert_eq!(
-            config.providers[2].auth_mode,
+            config.providers[2].auth.mode,
             crate::provider::AuthMode::OAuth
         );
+        assert!(config.providers[2].auth.session_file.is_none());
 
         // Session defaults
         assert_eq!(config.session_defaults.max_turns, 20);

@@ -20,8 +20,8 @@ use crate::tool::ToolPolicyConfig;
 pub struct LlmConfig {
     #[kdl(attr, optional, from = "String")]
     pub default_provider: Option<ProviderId>,
-    #[kdl(attr, optional)]
-    pub data_dir: Option<PathBuf>,
+    #[kdl(value, optional)]
+    pub auth_dir: Option<PathBuf>,
     #[kdl(children, name = "provider", default)]
     pub providers: Vec<ProviderConfig>,
     #[kdl(child, default)]
@@ -34,7 +34,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             default_provider: None,
-            data_dir: None,
+            auth_dir: None,
             providers: Vec::new(),
             session_defaults: SessionDefaults::default(),
             tool_policies: Vec::new(),

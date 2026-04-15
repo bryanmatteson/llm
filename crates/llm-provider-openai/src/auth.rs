@@ -1,3 +1,4 @@
+use base64::Engine;
 use llm_auth::{
     AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, OAuthEndpoints,
     OAuthTokenResponse, PkceChallenge, RedirectStrategy, TokenPair, build_auth_url, generate_state,
@@ -28,6 +29,34 @@ fn openai_endpoints() -> OAuthEndpoints {
         extra_auth_params: &[],
         state_is_verifier: false,
     }
+}
+
+/// Extract the `chatgpt_account_id` from an OpenAI OAuth access token (JWT).
+///
+/// The access token contains a custom claim namespace
+/// `https://api.openai.com/auth` with a `chatgpt_account_id` field.
+/// Returns `None` if the token is not a valid JWT or lacks the claim.
+fn extract_chatgpt_account_id(access_token: &str) -> Option<String> {
+    let payload_b64 = access_token.split('.').nth(1)?;
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    claims
+        .get("https://api.openai.com/auth")?
+        .get("chatgpt_account_id")?
+        .as_str()
+        .map(String::from)
+}
+
+/// Build an [`AuthSession`] metadata map, optionally including the
+/// ChatGPT account ID extracted from the access token JWT.
+fn build_oauth_metadata(access_token: &str) -> Metadata {
+    let mut metadata = Metadata::new();
+    if let Some(account_id) = extract_chatgpt_account_id(access_token) {
+        metadata.insert("chatgpt_account_id".to_string(), account_id);
+    }
+    metadata
 }
 
 /// Authentication provider for OpenAI.
@@ -173,6 +202,8 @@ impl AuthProvider for OpenAiAuthProvider {
 
         let expires_in = token_resp.expires_in.unwrap_or(3600) as i64;
 
+        let metadata = build_oauth_metadata(&token_resp.access_token);
+
         let tokens = TokenPair::new(
             token_resp.access_token,
             token_resp.refresh_token,
@@ -185,7 +216,7 @@ impl AuthProvider for OpenAiAuthProvider {
                 expires_at: tokens.expires_at,
             },
             tokens,
-            metadata: Metadata::new(),
+            metadata,
         };
 
         Ok(AuthCompletion { session })
@@ -224,6 +255,15 @@ impl AuthProvider for OpenAiAuthProvider {
 
         let expires_in = token_resp.expires_in.unwrap_or(3600) as i64;
 
+        // Re-extract account ID from the refreshed token; fall back to the
+        // previous session's metadata if the new token lacks the claim.
+        let mut metadata = build_oauth_metadata(&token_resp.access_token);
+        if !metadata.contains_key("chatgpt_account_id") {
+            if let Some(prev) = session.metadata.get("chatgpt_account_id") {
+                metadata.insert("chatgpt_account_id".to_string(), prev.clone());
+            }
+        }
+
         let tokens = TokenPair::new(
             token_resp.access_token,
             token_resp
@@ -238,7 +278,7 @@ impl AuthProvider for OpenAiAuthProvider {
                 expires_at: tokens.expires_at,
             },
             tokens,
-            metadata: session.metadata.clone(),
+            metadata,
         })
     }
 
