@@ -57,16 +57,9 @@ impl OpenAiClient {
     /// Create a new client, automatically selecting the base URL from the
     /// auth session method.
     ///
-    /// - API key → `https://api.openai.com/v1`
-    /// - OAuth / Bearer → `https://chatgpt.com/backend-api/codex`
+    /// Both API key and OAuth sessions use the standard OpenAI API base.
     pub fn from_session(auth_session: AuthSession, model: ModelId) -> Self {
-        let base_url = match &auth_session.method {
-            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. } => {
-                crate::descriptor::CHATGPT_API_BASE.to_string()
-            }
-            _ => crate::descriptor::API_BASE.to_string(),
-        };
-        Self::new(auth_session, model, base_url)
+        Self::new(auth_session, model, crate::descriptor::API_BASE)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
