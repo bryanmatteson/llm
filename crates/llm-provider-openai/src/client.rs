@@ -37,8 +37,9 @@ impl OpenAiClient {
     ///
     /// * `auth_session` – a previously authenticated session (API-key or OAuth).
     /// * `model`        – the model id to use (e.g. `"gpt-4o"`).
-    /// * `base_url`     – the API base URL (typically `https://api.openai.com/v1`
-    ///   for API-key auth, or `https://chatgpt.com/backend-api/codex` for OAuth).
+    /// * `base_url`     – the API base URL. When the session uses OAuth and no
+    ///   explicit base URL is provided, the client automatically routes to
+    ///   the ChatGPT backend API (`CHATGPT_API_BASE`).
     pub fn new(auth_session: AuthSession, model: ModelId, base_url: impl Into<String>) -> Self {
         let chatgpt_account_id = auth_session
             .metadata
@@ -51,6 +52,21 @@ impl OpenAiClient {
             model,
             chatgpt_account_id,
         }
+    }
+
+    /// Create a new client, automatically selecting the base URL from the
+    /// auth session method.
+    ///
+    /// - API key → `https://api.openai.com/v1`
+    /// - OAuth / Bearer → `https://chatgpt.com/backend-api/codex`
+    pub fn from_session(auth_session: AuthSession, model: ModelId) -> Self {
+        let base_url = match &auth_session.method {
+            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. } => {
+                crate::descriptor::CHATGPT_API_BASE.to_string()
+            }
+            _ => crate::descriptor::API_BASE.to_string(),
+        };
+        Self::new(auth_session, model, base_url)
     }
 
     // ── Helpers ─────────────────────────────────────────────────────
