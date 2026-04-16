@@ -386,8 +386,8 @@ impl AnthropicClient {
         let mut value = serde_json::to_value(body).unwrap_or_else(|_| json!({}));
         if self.is_oauth_like() {
             Self::apply_claude_oauth_system_prompt(&mut value);
-            Self::inject_fake_user_id(&mut value, &self.auth_session.tokens.access_token);
         }
+        Self::inject_claude_code_user_id(&mut value, &self.auth_session, &self.session_id);
         Self::disable_thinking_if_tool_choice_forced(&mut value);
         Self::normalize_temperature_for_thinking(&mut value);
         if Self::count_cache_controls(&value) == 0 {
@@ -870,7 +870,7 @@ impl AnthropicClient {
             return;
         }
 
-        let message_text = Self::first_system_text(original_system.as_ref());
+        let message_text = Self::first_user_message_text_from_root(object);
         let billing_header = format!(
             "x-anthropic-billing-header: cc_version={CLAUDE_VERSION}.{}; cc_entrypoint=cli; cch=00000;",
             Self::build_fingerprint(&message_text, CLAUDE_VERSION)
@@ -902,18 +902,6 @@ impl AnthropicClient {
         }
     }
 
-    fn first_system_text(system: Option<&Value>) -> String {
-        match system {
-            Some(Value::Array(blocks)) => blocks
-                .iter()
-                .find_map(|block| block.get("text").and_then(Value::as_str))
-                .unwrap_or_default()
-                .to_string(),
-            Some(Value::String(text)) => text.clone(),
-            _ => String::new(),
-        }
-    }
-
     fn collect_system_text(system: Option<&Value>) -> String {
         match system {
             Some(Value::Array(blocks)) => blocks
@@ -936,7 +924,7 @@ impl AnthropicClient {
         "Use the available tools when needed to help with software engineering tasks.\nKeep responses concise and focused on the user's request.\nPrefer acting on the user's task over describing product-specific workflows.".to_string()
     }
 
-    fn inject_fake_user_id(value: &mut Value, seed: &str) {
+    fn inject_claude_code_user_id(value: &mut Value, auth_session: &AuthSession, session_id: &str) {
         let Some(root) = value.as_object_mut() else {
             return;
         };
@@ -952,15 +940,71 @@ impl AnthropicClient {
             .get("user_id")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if Self::is_valid_fake_user_id(existing)
-            || Self::is_valid_claude_code_metadata_user_id(existing)
-        {
+        if !existing.trim().is_empty() {
             return;
         }
 
-        metadata.insert("user_id".into(), Value::String(Self::fake_user_id(seed)));
+        metadata.insert(
+            "user_id".into(),
+            Value::String(Self::claude_code_user_id(auth_session, session_id)),
+        );
     }
 
+    fn claude_code_user_id(auth_session: &AuthSession, session_id: &str) -> String {
+        let mut user_id = Self::claude_code_extra_metadata();
+        user_id.insert(
+            "device_id".into(),
+            Value::String(Self::claude_code_device_id(
+                &auth_session.tokens.access_token,
+            )),
+        );
+        user_id.insert(
+            "account_uuid".into(),
+            Value::String(Self::claude_code_account_uuid(auth_session)),
+        );
+        user_id.insert("session_id".into(), Value::String(session_id.to_string()));
+        Value::Object(user_id).to_string()
+    }
+
+    fn claude_code_extra_metadata() -> serde_json::Map<String, Value> {
+        let extra = std::env::var("CLAUDE_CODE_EXTRA_METADATA")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let Some(extra) = extra else {
+            return serde_json::Map::new();
+        };
+
+        serde_json::from_str::<Value>(&extra)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default()
+    }
+
+    fn claude_code_device_id(seed: &str) -> String {
+        Sha256::digest(format!("anthropic-device:{seed}"))
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn claude_code_account_uuid(auth_session: &AuthSession) -> String {
+        if !matches!(
+            auth_session.method,
+            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. }
+        ) {
+            return String::new();
+        }
+
+        auth_session
+            .metadata
+            .get("account_uuid")
+            .or_else(|| auth_session.metadata.get("accountUuid"))
+            .filter(|value| Self::is_uuid_like(value))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     fn is_valid_claude_code_metadata_user_id(value: &str) -> bool {
         let Ok(parsed) = serde_json::from_str::<Value>(value) else {
             return false;
@@ -985,59 +1029,6 @@ impl AnthropicClient {
             && device_id.chars().all(|ch| ch.is_ascii_hexdigit())
             && (account_uuid.is_empty() || Self::is_uuid_like(account_uuid))
             && Self::is_uuid_like(session_id)
-    }
-
-    fn fake_user_id(seed: &str) -> String {
-        let user_digest = Sha256::digest(format!("anthropic-user:{seed}"));
-        let account_digest = Sha256::digest(format!("anthropic-account:{seed}"));
-        let session_digest = Sha256::digest(format!("anthropic-session:{seed}"));
-
-        format!(
-            "user_{}_account_{}_session_{}",
-            user_digest
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>(),
-            Self::uuid_like_from_bytes(&account_digest[..16]),
-            Self::uuid_like_from_bytes(&session_digest[..16]),
-        )
-    }
-
-    fn uuid_like_from_bytes(bytes: &[u8]) -> String {
-        let parts = [
-            &bytes[0..4],
-            &bytes[4..6],
-            &bytes[6..8],
-            &bytes[8..10],
-            &bytes[10..16],
-        ];
-
-        parts
-            .iter()
-            .map(|part| {
-                part.iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("-")
-    }
-
-    fn is_valid_fake_user_id(value: &str) -> bool {
-        let Some(rest) = value.strip_prefix("user_") else {
-            return false;
-        };
-        let Some((user_hex, rest)) = rest.split_once("_account_") else {
-            return false;
-        };
-        let Some((account, session)) = rest.split_once("_session_") else {
-            return false;
-        };
-
-        user_hex.len() == 64
-            && user_hex.chars().all(|ch| ch.is_ascii_hexdigit())
-            && Self::is_uuid_like(account)
-            && Self::is_uuid_like(session)
     }
 
     fn is_uuid_like(value: &str) -> bool {
@@ -1081,11 +1072,13 @@ impl AnthropicClient {
     }
 
     fn inject_oauth_billing_header(body: &mut Value) {
+        let fingerprint_text = Self::first_user_message_text_from_body(body);
         let mut blocks = {
             let Some(object) = body.as_object_mut() else {
                 return;
             };
-            let blocks = Self::system_blocks_with_billing(object.get("system").cloned());
+            let blocks =
+                Self::system_blocks_with_billing(object.get("system").cloned(), &fingerprint_text);
             object.insert("system".into(), Value::Array(blocks.clone()));
             blocks
         };
@@ -1127,7 +1120,10 @@ impl AnthropicClient {
         }
     }
 
-    fn system_blocks_with_billing(original_system: Option<Value>) -> Vec<Value> {
+    fn system_blocks_with_billing(
+        original_system: Option<Value>,
+        fingerprint_text: &str,
+    ) -> Vec<Value> {
         let mut blocks = match original_system {
             Some(Value::Array(blocks)) => blocks,
             Some(Value::String(text)) if !text.trim().is_empty() => vec![json!({
@@ -1148,11 +1144,7 @@ impl AnthropicClient {
             return blocks;
         }
 
-        let message_text = blocks
-            .iter()
-            .find_map(|value| value.get("text").and_then(Value::as_str))
-            .unwrap_or_default();
-        let build_hash = Self::build_fingerprint(message_text, CLAUDE_VERSION);
+        let build_hash = Self::build_fingerprint(fingerprint_text, CLAUDE_VERSION);
         let header = format!(
             "x-anthropic-billing-header: cc_version={CLAUDE_VERSION}.{build_hash}; cc_entrypoint=cli; cch=00000;"
         );
@@ -1174,6 +1166,46 @@ impl AnthropicClient {
             .collect::<String>();
         let digest = Sha256::digest(format!("{FINGERPRINT_SALT}{sample}{version}"));
         Self::short_hex(&digest, 3)
+    }
+
+    fn first_user_message_text_from_body(body: &Value) -> String {
+        body.get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| {
+                messages
+                    .iter()
+                    .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            })
+            .map(Self::first_text_from_message_content)
+            .unwrap_or_default()
+    }
+
+    fn first_user_message_text_from_root(root: &serde_json::Map<String, Value>) -> String {
+        root.get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| {
+                messages
+                    .iter()
+                    .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            })
+            .map(Self::first_text_from_message_content)
+            .unwrap_or_default()
+    }
+
+    fn first_text_from_message_content(message: &Value) -> String {
+        match message.get("content") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Array(blocks)) => blocks
+                .iter()
+                .find_map(|block| {
+                    (block.get("type").and_then(Value::as_str) == Some("text"))
+                        .then(|| block.get("text").and_then(Value::as_str))
+                        .flatten()
+                })
+                .unwrap_or_default()
+                .to_string(),
+            _ => String::new(),
+        }
     }
 
     fn short_hex(bytes: &[u8], len: usize) -> String {
@@ -2291,6 +2323,15 @@ mod tests {
         }
     }
 
+    fn test_auth_session_with_metadata(method: AuthMethod, metadata: Metadata) -> AuthSession {
+        AuthSession {
+            provider_id: PROVIDER_ID.clone(),
+            method,
+            tokens: TokenPair::new("test-token".to_string(), None, 3600),
+            metadata,
+        }
+    }
+
     fn cliproxyapi_oauth_session() -> AuthSession {
         AuthSession {
             provider_id: PROVIDER_ID.clone(),
@@ -2967,28 +3008,38 @@ mod tests {
     }
 
     #[test]
-    fn fake_user_id_is_deterministic_and_valid() {
-        let first = AnthropicClient::fake_user_id("seed-token");
-        let second = AnthropicClient::fake_user_id("seed-token");
+    fn claude_code_user_id_is_deterministic_and_valid() {
+        let session = test_auth_session(AuthMethod::Bearer { expires_at: None });
+        let first =
+            AnthropicClient::claude_code_user_id(&session, "33333333-3333-3333-3333-333333333333");
+        let second =
+            AnthropicClient::claude_code_user_id(&session, "33333333-3333-3333-3333-333333333333");
         assert_eq!(first, second);
-        assert!(AnthropicClient::is_valid_fake_user_id(&first));
+        assert!(AnthropicClient::is_valid_claude_code_metadata_user_id(
+            &first
+        ));
     }
 
     #[test]
-    fn inject_fake_user_id_preserves_existing_valid_value() {
-        let existing = AnthropicClient::fake_user_id("existing-seed");
+    fn inject_claude_code_user_id_preserves_existing_valid_value() {
+        let existing = "custom-user-id".to_string();
         let mut payload = json!({
             "metadata": {
                 "user_id": existing.clone()
             }
         });
+        let session = test_auth_session(AuthMethod::Bearer { expires_at: None });
 
-        AnthropicClient::inject_fake_user_id(&mut payload, "new-seed");
+        AnthropicClient::inject_claude_code_user_id(
+            &mut payload,
+            &session,
+            "33333333-3333-3333-3333-333333333333",
+        );
         assert_eq!(payload["metadata"]["user_id"], existing);
     }
 
     #[test]
-    fn inject_fake_user_id_preserves_claude_code_metadata_shape() {
+    fn inject_claude_code_user_id_preserves_claude_code_metadata_shape() {
         let existing = json!({
             "device_id": "1111111111111111111111111111111111111111111111111111111111111111",
             "account_uuid": "22222222-2222-2222-2222-222222222222",
@@ -3000,16 +3051,21 @@ mod tests {
                 "user_id": existing.clone()
             }
         });
+        let session = test_auth_session(AuthMethod::Bearer { expires_at: None });
 
-        AnthropicClient::inject_fake_user_id(&mut payload, "new-seed");
+        AnthropicClient::inject_claude_code_user_id(
+            &mut payload,
+            &session,
+            "33333333-3333-3333-3333-333333333333",
+        );
         assert_eq!(payload["metadata"]["user_id"], existing);
     }
 
     #[test]
-    fn prepare_body_injects_fake_user_id_for_oauth() {
+    fn prepare_body_injects_claude_code_user_id_for_api_key_requests() {
         let client = AnthropicClient::new(
-            test_auth_session(AuthMethod::OAuth {
-                expires_at: Utc::now(),
+            test_auth_session(AuthMethod::ApiKey {
+                masked: "sk-ant-****".into(),
             }),
             ModelId::new("claude-sonnet-4-20250514"),
             None,
@@ -3034,7 +3090,171 @@ mod tests {
         let prepared = client.prepare_body(&body);
         let user_id = prepared.body["metadata"]["user_id"]
             .as_str()
-            .expect("oauth metadata.user_id");
-        assert!(AnthropicClient::is_valid_fake_user_id(user_id));
+            .expect("claude code metadata.user_id");
+        assert!(AnthropicClient::is_valid_claude_code_metadata_user_id(
+            user_id
+        ));
+    }
+
+    #[test]
+    fn prepare_body_omits_account_uuid_for_api_key_metadata() {
+        let mut metadata = Metadata::new();
+        metadata.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+        let client = AnthropicClient::new(
+            test_auth_session_with_metadata(
+                AuthMethod::ApiKey {
+                    masked: "sk-ant-****".into(),
+                },
+                metadata,
+            ),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body);
+        let user_id = prepared.body["metadata"]["user_id"]
+            .as_str()
+            .expect("claude code metadata.user_id");
+        let parsed: Value = serde_json::from_str(user_id).expect("metadata json");
+        assert_eq!(parsed["account_uuid"], "");
+    }
+
+    #[test]
+    fn prepare_body_uses_oauth_account_uuid_from_session_metadata() {
+        let mut metadata = Metadata::new();
+        metadata.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+        let client = AnthropicClient::new(
+            test_auth_session_with_metadata(
+                AuthMethod::OAuth {
+                    expires_at: Utc::now(),
+                },
+                metadata,
+            ),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body);
+        let user_id = prepared.body["metadata"]["user_id"]
+            .as_str()
+            .expect("claude code metadata.user_id");
+        let parsed: Value = serde_json::from_str(user_id).expect("metadata json");
+        assert_eq!(
+            parsed["account_uuid"],
+            "22222222-2222-2222-2222-222222222222"
+        );
+    }
+
+    #[test]
+    fn prepare_body_uses_first_user_message_for_attribution_fingerprint() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: Some(Value::String("Use tools.".into())),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("first question".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body);
+        let billing_header = prepared.body["system"][0]["text"]
+            .as_str()
+            .expect("billing header text");
+        assert!(billing_header.contains("cc_version=2.1.63.ac2;"));
+    }
+
+    #[test]
+    fn prepare_body_uses_first_text_block_from_first_user_message_for_attribution_fingerprint() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: Some(Value::String("Use tools carefully.".into())),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![
+                WireMessage {
+                    role: "user".into(),
+                    content: WireContent::Blocks(vec![
+                        json!({"type": "tool_result", "tool_use_id": "toolu_01", "content": "ignored"}),
+                        json!({"type": "text", "text": "first question"}),
+                    ]),
+                },
+                WireMessage {
+                    role: "user".into(),
+                    content: WireContent::Text("later question".into()),
+                },
+            ],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body);
+        let billing_header = prepared.body["system"][0]["text"]
+            .as_str()
+            .expect("billing header text");
+        assert!(billing_header.contains("cc_version=2.1.63.ac2;"));
     }
 }
