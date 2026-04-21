@@ -4,6 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+claude-code-emulation = ["dep:rquest"]
+
 [dependencies]
 llm-core = { workspace = true }
 llm-auth = { workspace = true }
@@ -14,7 +18,7 @@ brotli = "8"
 chrono = { workspace = true }
 flate2 = "1"
 reqwest = { workspace = true }
-rquest = { version = "5.1.0", features = ["json", "stream", "gzip", "brotli", "deflate", "zstd"] }
+rquest = { version = "5.1.0", optional = true, features = ["json", "stream", "gzip", "brotli", "deflate", "zstd"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

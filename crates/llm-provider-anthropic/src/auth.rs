@@ -54,6 +54,67 @@ fn refresh_token_payload(refresh_token: &str) -> serde_json::Value {
     })
 }
 
+fn build_oauth_metadata(params: &Metadata) -> Metadata {
+    let mut metadata = Metadata::new();
+
+    if let Some(compat_target) = params
+        .get("compat_target")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        metadata.insert("compat_target".into(), compat_target.to_string());
+    }
+
+    if let Some(account_uuid) = params
+        .get("account_uuid")
+        .or_else(|| params.get("accountUuid"))
+        .map(|value| value.trim())
+        .filter(|value| is_uuid_like(value))
+    {
+        metadata.insert("account_uuid".into(), account_uuid.to_string());
+    }
+
+    metadata
+}
+
+fn build_oauth_session(
+    tokens: TokenPair,
+    metadata: Metadata,
+    provider_id: &ProviderId,
+) -> AuthSession {
+    AuthSession {
+        provider_id: provider_id.clone(),
+        method: AuthMethod::OAuth {
+            expires_at: tokens.expires_at,
+        },
+        tokens,
+        metadata,
+    }
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+
+    for (idx, byte) in bytes.iter().enumerate() {
+        let is_hyphen = matches!(idx, 8 | 13 | 18 | 23);
+        if is_hyphen {
+            if *byte != b'-' {
+                return false;
+            }
+            continue;
+        }
+
+        if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+
+    true
+}
+
 /// Authentication provider for Anthropic.
 ///
 /// Supports two discovery paths:
@@ -212,14 +273,7 @@ impl AuthProvider for AnthropicAuthProvider {
             expires_in,
         );
 
-        let session = AuthSession {
-            provider_id: self.provider_id.clone(),
-            method: AuthMethod::OAuth {
-                expires_at: tokens.expires_at,
-            },
-            tokens,
-            metadata: Metadata::new(),
-        };
+        let session = build_oauth_session(tokens, build_oauth_metadata(params), &self.provider_id);
 
         Ok(AuthCompletion { session })
     }
@@ -263,14 +317,11 @@ impl AuthProvider for AnthropicAuthProvider {
             expires_in,
         );
 
-        Ok(AuthSession {
-            provider_id: self.provider_id.clone(),
-            method: AuthMethod::OAuth {
-                expires_at: tokens.expires_at,
-            },
+        Ok(build_oauth_session(
             tokens,
-            metadata: session.metadata.clone(),
-        })
+            session.metadata.clone(),
+            &self.provider_id,
+        ))
     }
 
     async fn validate(&self, session: &AuthSession) -> Result<bool, FrameworkError> {
@@ -315,5 +366,114 @@ mod tests {
         assert_eq!(payload["grant_type"], "refresh_token");
         assert_eq!(payload["refresh_token"], "refresh-123");
         assert_eq!(payload["client_id"], ANTHROPIC_CLIENT_ID);
+    }
+
+    #[test]
+    fn oauth_compat_metadata_is_preserved_across_login_and_refresh() {
+        let mut params = Metadata::new();
+        params.insert("compat_target".into(), "claude_code".into());
+        params.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+        params.insert("accountUuid".into(), "ignored-invalid".into());
+
+        let metadata = build_oauth_metadata(&params);
+        assert_eq!(
+            metadata.get("compat_target").map(String::as_str),
+            Some("claude_code")
+        );
+        assert_eq!(
+            metadata.get("account_uuid").map(String::as_str),
+            Some("22222222-2222-2222-2222-222222222222")
+        );
+
+        let original_tokens =
+            TokenPair::new("oauth-access".into(), Some("oauth-refresh".into()), 3600);
+        let refreshed_tokens = TokenPair::new(
+            "oauth-access-new".into(),
+            Some("oauth-refresh-new".into()),
+            7200,
+        );
+
+        let original = build_oauth_session(original_tokens, metadata.clone(), &PROVIDER_ID);
+        let refreshed =
+            build_oauth_session(refreshed_tokens, original.metadata.clone(), &PROVIDER_ID);
+
+        assert_eq!(refreshed.metadata, metadata);
+        assert_eq!(
+            refreshed.metadata.get("account_uuid").map(String::as_str),
+            Some("22222222-2222-2222-2222-222222222222")
+        );
+    }
+
+    #[test]
+    fn test_oauth_login_records_account_uuid_when_available_for_claude_compat() {
+        let mut params = Metadata::new();
+        params.insert("compat_target".into(), "claude_code".into());
+        params.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+
+        let metadata = build_oauth_metadata(&params);
+        assert_eq!(
+            metadata.get("account_uuid").map(String::as_str),
+            Some("22222222-2222-2222-2222-222222222222")
+        );
+        assert_eq!(
+            metadata.get("compat_target").map(String::as_str),
+            Some("claude_code")
+        );
+    }
+
+    #[test]
+    fn test_refresh_preserves_claude_compat_metadata_across_token_rotation() {
+        let mut metadata = Metadata::new();
+        metadata.insert("compat_target".into(), "claude_code".into());
+        metadata.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+
+        let original = build_oauth_session(
+            TokenPair::new("oauth-access".into(), Some("oauth-refresh".into()), 3600),
+            metadata.clone(),
+            &PROVIDER_ID,
+        );
+        let refreshed = build_oauth_session(
+            TokenPair::new(
+                "oauth-access-new".into(),
+                Some("oauth-refresh-new".into()),
+                7200,
+            ),
+            original.metadata.clone(),
+            &PROVIDER_ID,
+        );
+
+        assert_eq!(refreshed.metadata, metadata);
+    }
+
+    #[test]
+    fn build_oauth_metadata_ignores_malformed_account_uuid() {
+        let mut params = Metadata::new();
+        params.insert("account_uuid".into(), "not-a-uuid".into());
+
+        let metadata = build_oauth_metadata(&params);
+        assert!(!metadata.contains_key("account_uuid"));
+    }
+
+    #[test]
+    fn test_claude_compat_metadata_never_emits_malformed_account_uuid() {
+        let mut params = Metadata::new();
+        params.insert("compat_target".into(), "claude_code".into());
+        params.insert("account_uuid".into(), "not-a-uuid".into());
+
+        let metadata = build_oauth_metadata(&params);
+        assert!(!metadata.contains_key("account_uuid"));
+        assert_eq!(
+            metadata.get("compat_target").map(String::as_str),
+            Some("claude_code")
+        );
     }
 }

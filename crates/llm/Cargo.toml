@@ -11,6 +11,7 @@ default = ["openai", "anthropic", "google", "cli", "gui"]
 # Providers
 openai    = ["dep:llm-provider-openai"]
 anthropic = ["dep:llm-provider-anthropic"]
+anthropic-claude-code = ["anthropic", "llm-provider-anthropic/claude-code-emulation"]
 google    = ["dep:llm-provider-google"]
 
 # MCP server

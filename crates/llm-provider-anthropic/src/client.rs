@@ -20,6 +20,9 @@ use llm_core::{
     StopReason, TokenUsage,
 };
 use llm_provider_api::{LlmProviderClient, ProviderEvent, TurnRequest, TurnResponse};
+#[cfg(not(feature = "claude-code-emulation"))]
+use reqwest;
+#[cfg(feature = "claude-code-emulation")]
 use rquest as reqwest;
 
 use crate::descriptor::{API_BASE, PROVIDER_ID};
@@ -42,8 +45,10 @@ const MESSAGE_CACHE_CONTROL_METADATA_KEY: &str = "anthropic.cache_control_json";
 const CONTEXT_MANAGEMENT_METADATA_KEY: &str = "anthropic.context_management_json";
 const TOOL_CALLER_TYPE_KEY: &str = "anthropic.caller_type";
 const TOOL_CALLER_TOOL_ID_KEY: &str = "anthropic.caller_tool_id";
+const COMPAT_TARGET_REQUEST_KEY: &str = "compat_target";
 const ADVANCED_TOOL_USE_BETA: &str = "advanced-tool-use-2025-11-20";
 const CLAUDE_CODE_BETA: &str = "claude-code-20250219";
+const CLAUDE_CODE_COMPAT_TARGET: &str = "claude_code";
 const CONTEXT_MANAGEMENT_BETA: &str = "context-management-2025-06-27";
 const INTERLEAVED_THINKING_BETA: &str = "interleaved-thinking-2025-05-14";
 const OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -190,16 +195,25 @@ impl AnthropicClient {
         }
     }
 
-    fn is_oauth_like(&self) -> bool {
+    fn compat_target(request: &TurnRequest) -> Option<&str> {
+        request
+            .provider_request
+            .get(COMPAT_TARGET_REQUEST_KEY)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    fn uses_claude_compat(&self, request: &TurnRequest) -> bool {
         matches!(
-            self.auth_session.method,
-            llm_auth::AuthMethod::OAuth { .. } | llm_auth::AuthMethod::Bearer { .. }
+            Self::compat_target(request),
+            Some(CLAUDE_CODE_COMPAT_TARGET)
         )
     }
 
-    fn request_url(&self) -> String {
+    fn request_url(&self, request: &TurnRequest) -> String {
         let base = self.base_url.trim_end_matches('/');
-        if self.is_oauth_like() {
+        if self.uses_claude_compat(request) {
             format!("{base}/messages?beta=true")
         } else {
             format!("{base}/messages")
@@ -354,7 +368,11 @@ impl AnthropicClient {
                 .header("Accept-Encoding", "gzip, deflate, br, zstd")
         };
         let builder = self.apply_auth(builder);
-        let builder = self.apply_claude_headers(builder);
+        let builder = if self.uses_claude_compat(request) {
+            self.apply_claude_headers(builder)
+        } else {
+            builder
+        };
         if matches!(
             self.auth_session.method,
             llm_auth::AuthMethod::ApiKey { .. }
@@ -382,12 +400,12 @@ impl AnthropicClient {
         }
     }
 
-    fn prepare_body(&self, body: &MessagesRequest) -> PreparedBody {
+    fn prepare_body(&self, body: &MessagesRequest, request: &TurnRequest) -> PreparedBody {
         let mut value = serde_json::to_value(body).unwrap_or_else(|_| json!({}));
-        if self.is_oauth_like() {
+        if self.uses_claude_compat(request) {
             Self::apply_claude_oauth_system_prompt(&mut value);
+            Self::inject_claude_code_user_id(&mut value, &self.auth_session, &self.session_id);
         }
-        Self::inject_claude_code_user_id(&mut value, &self.auth_session, &self.session_id);
         Self::disable_thinking_if_tool_choice_forced(&mut value);
         Self::normalize_temperature_for_thinking(&mut value);
         if Self::count_cache_controls(&value) == 0 {
@@ -396,7 +414,7 @@ impl AnthropicClient {
         Self::enforce_cache_control_limit(&mut value, MAX_CACHE_CONTROL_BLOCKS);
         Self::normalize_cache_control_ttl(&mut value);
         let extra_betas = Self::extract_and_remove_betas(&mut value);
-        if self.is_oauth_like() {
+        if self.uses_claude_compat(request) {
             Self::remap_oauth_tool_names_in_body(&mut value);
             Self::inject_oauth_billing_header(&mut value);
         }
@@ -1296,7 +1314,7 @@ impl AnthropicClient {
     fn beta_headers(&self, request: &TurnRequest, extra_betas: &[String]) -> Vec<String> {
         let mut betas = Vec::new();
 
-        if self.is_oauth_like() {
+        if self.uses_claude_compat(request) {
             for beta in [
                 CLAUDE_CODE_BETA,
                 OAUTH_BETA,
@@ -1461,7 +1479,7 @@ impl AnthropicClient {
     }
 
     /// Convert an Anthropic wire response back into canonical [`Message`]s.
-    fn wire_to_message(response: &MessagesResponse) -> Message {
+    fn wire_to_message(response: &MessagesResponse, claude_compat: bool) -> Message {
         let mut content = Vec::new();
         let mut metadata = Metadata::new();
 
@@ -1503,7 +1521,11 @@ impl AnthropicClient {
                         .unwrap_or(Value::Object(Default::default()));
                     content.push(ContentBlock::ToolUse {
                         id: id.to_string(),
-                        name: Self::reverse_oauth_tool_name(name).to_string(),
+                        name: if claude_compat {
+                            Self::reverse_oauth_tool_name(name).to_string()
+                        } else {
+                            name.to_string()
+                        },
                         input,
                     });
                 }
@@ -1770,6 +1792,7 @@ impl AnthropicClient {
     async fn handle_stream_event(
         event_name: &str,
         data: &str,
+        claude_compat: bool,
         state: &mut AnthropicStreamState,
         tx: &mpsc::Sender<Result<ProviderEvent>>,
     ) -> Result<()> {
@@ -1842,7 +1865,11 @@ impl AnthropicClient {
                         tx,
                         ProviderEvent::ToolCallStart {
                             id: id.to_string(),
-                            name: Self::reverse_oauth_tool_name(name).to_string(),
+                            name: if claude_compat {
+                                Self::reverse_oauth_tool_name(name).to_string()
+                            } else {
+                                name.to_string()
+                            },
                             metadata,
                         },
                     )
@@ -1980,6 +2007,7 @@ impl AnthropicClient {
     async fn pump_stream(
         response: reqwest::Response,
         tx: mpsc::Sender<Result<ProviderEvent>>,
+        claude_compat: bool,
     ) -> Result<()> {
         let mut state = AnthropicStreamState::default();
         let mut bytes = response.bytes_stream();
@@ -2021,7 +2049,8 @@ impl AnthropicClient {
                             .clone()
                             .or(derived_event)
                             .unwrap_or_else(|| "message".to_string());
-                        Self::handle_stream_event(&event, &payload, &mut state, &tx).await?;
+                        Self::handle_stream_event(&event, &payload, claude_compat, &mut state, &tx)
+                            .await?;
                     }
                     event_name = None;
                     data_lines.clear();
@@ -2052,7 +2081,7 @@ impl AnthropicClient {
                 .clone()
                 .or(derived_event)
                 .unwrap_or_else(|| "message".to_string());
-            Self::handle_stream_event(&event, &payload, &mut state, &tx).await?;
+            Self::handle_stream_event(&event, &payload, claude_compat, &mut state, &tx).await?;
         }
 
         if !state.completed {
@@ -2166,9 +2195,9 @@ impl LlmProviderClient for AnthropicClient {
             stream: false,
             extra_body,
         };
-        let prepared = self.prepare_body(&body);
+        let prepared = self.prepare_body(&body, request);
 
-        let url = self.request_url();
+        let url = self.request_url(request);
         let http = crate::transport::anthropic_runtime_http()?;
         let builder =
             client.apply_request_headers(http.post(&url), request, &prepared.extra_betas, false);
@@ -2198,7 +2227,7 @@ impl LlmProviderClient for AnthropicClient {
             )
         })?;
 
-        let message = Self::wire_to_message(&response);
+        let message = Self::wire_to_message(&response, self.uses_claude_compat(request));
         let stop_reason = Self::map_stop_reason(response.stop_reason.as_deref());
 
         let usage = response
@@ -2257,9 +2286,9 @@ impl LlmProviderClient for AnthropicClient {
             stream: true,
             extra_body,
         };
-        let prepared = self.prepare_body(&body);
+        let prepared = self.prepare_body(&body, request);
 
-        let url = self.request_url();
+        let url = self.request_url(request);
         let http = crate::transport::anthropic_runtime_http()?;
         let builder =
             client.apply_request_headers(http.post(&url), request, &prepared.extra_betas, true);
@@ -2270,8 +2299,9 @@ impl LlmProviderClient for AnthropicClient {
         let resp = Self::check_response(resp, &PROVIDER_ID).await?;
 
         let (tx, rx) = mpsc::channel(64);
+        let claude_compat = client.uses_claude_compat(request);
         tokio::spawn(async move {
-            if let Err(err) = Self::pump_stream(resp, tx.clone()).await {
+            if let Err(err) = Self::pump_stream(resp, tx.clone(), claude_compat).await {
                 let _ = tx.send(Err(err)).await;
             }
         });
@@ -2438,11 +2468,35 @@ mod tests {
                     "input_schema": {"type": "object"},
                 }),
             ],
-            provider_request: Default::default(),
+            provider_request: serde_json::Map::from_iter([(
+                COMPAT_TARGET_REQUEST_KEY.into(),
+                Value::String(CLAUDE_CODE_COMPAT_TARGET.into()),
+            )]),
             model: None,
             max_tokens: None,
             temperature: Some(0.2),
         }
+    }
+
+    fn default_turn_request() -> TurnRequest {
+        TurnRequest {
+            system_prompt: None,
+            messages: vec![Message::user("hi")],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: None,
+            max_tokens: None,
+            temperature: None,
+        }
+    }
+
+    fn claude_compat_turn_request() -> TurnRequest {
+        let mut request = default_turn_request();
+        request.provider_request.insert(
+            COMPAT_TARGET_REQUEST_KEY.into(),
+            Value::String(CLAUDE_CODE_COMPAT_TARGET.into()),
+        );
+        request
     }
 
     fn request_headers_map(request: &reqwest::Request) -> BTreeMap<String, String> {
@@ -2490,7 +2544,8 @@ mod tests {
         );
         let body = cliproxyapi_golden_body();
 
-        let prepared = client.prepare_body(&body);
+        let request = cliproxyapi_golden_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let expected: Value = serde_json::from_str(include_str!(
             "../tests/fixtures/cliproxyapi_oauth_body.json"
         ))
@@ -2507,12 +2562,12 @@ mod tests {
             None,
         );
         let body = cliproxyapi_golden_body();
-        let prepared = client.prepare_body(&body);
         let request = cliproxyapi_golden_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
         let built = client
             .apply_request_headers(
-                http.post(client.request_url()),
+                http.post(client.request_url(&request)),
                 &request,
                 &prepared.extra_betas,
                 false,
@@ -2529,7 +2584,7 @@ mod tests {
     }
 
     #[test]
-    fn api_key_requests_still_use_claude_header_shape() {
+    fn standard_requests_skip_claude_header_shape() {
         let client = AnthropicClient::new(
             test_auth_session(AuthMethod::ApiKey {
                 masked: "sk-ant-****".into(),
@@ -2553,20 +2608,12 @@ mod tests {
             stream: false,
             extra_body: Default::default(),
         };
-        let prepared = client.prepare_body(&body);
-        let request = TurnRequest {
-            system_prompt: None,
-            messages: vec![Message::user("hi")],
-            tools: vec![],
-            provider_request: Default::default(),
-            model: None,
-            max_tokens: None,
-            temperature: None,
-        };
+        let request = default_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
         let built = client
             .apply_request_headers(
-                http.post(client.request_url()),
+                http.post(client.request_url(&request)),
                 &request,
                 &prepared.extra_betas,
                 false,
@@ -2575,29 +2622,62 @@ mod tests {
             .expect("request build");
         let headers = request_headers_map(&built);
 
-        assert_eq!(headers.get("x-app").map(String::as_str), Some("cli"));
-        assert_eq!(
-            headers.get("user-agent").map(String::as_str),
-            Some("claude-cli/2.1.63 (external, cli)")
-        );
-        assert_eq!(
-            headers.get("x-stainless-runtime").map(String::as_str),
-            Some("node")
-        );
-        assert_eq!(
-            headers
-                .get("x-stainless-package-version")
-                .map(String::as_str),
-            Some(CLAUDE_STAINLESS_PACKAGE_VERSION)
-        );
-        assert!(headers.contains_key("x-client-request-id"));
-        assert!(headers.contains_key("x-claude-code-session-id"));
+        assert!(!headers.contains_key("x-app"));
+        assert!(!headers.contains_key("x-client-request-id"));
+        assert!(!headers.contains_key("x-claude-code-session-id"));
+        assert!(!headers.contains_key("x-stainless-runtime"));
         assert_eq!(
             headers
                 .get("anthropic-dangerous-direct-browser-access")
                 .map(String::as_str),
             Some("true")
         );
+    }
+
+    #[test]
+    fn test_standard_anthropic_request_skips_claude_headers_and_prompt_injection() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = default_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: Some(Value::String("Use tools.".into())),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+        let prepared = client.prepare_body(&body, &request);
+        let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
+        let built = client
+            .apply_request_headers(
+                http.post(client.request_url(&request)),
+                &request,
+                &prepared.extra_betas,
+                false,
+            )
+            .build()
+            .expect("request build");
+        let headers = request_headers_map(&built);
+
+        assert_eq!(prepared.body["system"][0]["text"], "Use tools.");
+        assert_eq!(prepared.body["system"].as_array().map(Vec::len), Some(1));
+        assert!(prepared.body.get("metadata").is_none());
+        assert!(!headers.contains_key("x-app"));
+        assert!(!headers.contains_key("x-claude-code-session-id"));
     }
 
     #[test]
@@ -2680,6 +2760,27 @@ mod tests {
     }
 
     #[test]
+    fn test_claude_compat_tool_results_preserve_tool_reference_blocks_across_round_trip() {
+        let msg = Message::tool_result(
+            "toolu_01",
+            json!([
+                {
+                    "type": "tool_reference",
+                    "tool_name": "bash"
+                }
+            ]),
+        );
+        let wire = AnthropicClient::message_to_wire(&msg);
+        match &wire.content {
+            WireContent::Blocks(blocks) => {
+                assert_eq!(blocks[0]["content"][0]["type"], "tool_reference");
+                assert_eq!(blocks[0]["content"][0]["tool_name"], "bash");
+            }
+            _ => panic!("expected Blocks content"),
+        }
+    }
+
+    #[test]
     fn messages_to_wire_coalesces_adjacent_tool_results() {
         let messages = vec![
             Message::user("Hi"),
@@ -2723,7 +2824,7 @@ mod tests {
             context_management: None,
         };
 
-        let msg = AnthropicClient::wire_to_message(&response);
+        let msg = AnthropicClient::wire_to_message(&response, true);
         assert_eq!(msg.role, Role::Assistant);
         assert_eq!(msg.content.len(), 2);
         match &msg.content[1] {
@@ -2737,6 +2838,55 @@ mod tests {
                 .map(String::as_str),
             Some("container_01")
         );
+    }
+
+    #[test]
+    fn test_claude_compat_response_parsing_restores_lowercase_tool_names_for_local_tools() {
+        let response = MessagesResponse {
+            id: "msg_compat".into(),
+            model: "claude-sonnet-4-20250514".into(),
+            content: vec![json!({
+                "type": "tool_use",
+                "id": "toolu_01",
+                "name": "Read",
+                "input": {"path": "README.md"}
+            })],
+            stop_reason: Some("tool_use".into()),
+            usage: None,
+            container: None,
+            context_management: None,
+        };
+
+        let msg = AnthropicClient::wire_to_message(&response, true);
+        match &msg.content[0] {
+            ContentBlock::ToolUse { name, .. } => assert_eq!(name, "read"),
+            other => panic!("expected tool use block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_standard_anthropic_response_parsing_preserves_original_tool_names_without_claude_reverse_mapping()
+     {
+        let response = MessagesResponse {
+            id: "msg_plain".into(),
+            model: "claude-sonnet-4-20250514".into(),
+            content: vec![json!({
+                "type": "tool_use",
+                "id": "toolu_01",
+                "name": "Read",
+                "input": {"path": "README.md"}
+            })],
+            stop_reason: Some("tool_use".into()),
+            usage: None,
+            container: None,
+            context_management: None,
+        };
+
+        let msg = AnthropicClient::wire_to_message(&response, false);
+        match &msg.content[0] {
+            ContentBlock::ToolUse { name, .. } => assert_eq!(name, "Read"),
+            other => panic!("expected tool use block, got {other:?}"),
+        }
     }
 
     #[test]
@@ -2760,6 +2910,37 @@ mod tests {
                 assert_eq!(blocks[0]["type"], "server_tool_use");
             }
             _ => panic!("expected raw blocks"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_claude_compat_streaming_tool_events_round_trip_without_name_loss() {
+        let (tx, mut rx) = mpsc::channel(4);
+        let mut state = AnthropicStreamState::default();
+        let payload = json!({
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_01",
+                "name": "Read",
+                "input": {"path": "README.md"}
+            }
+        })
+        .to_string();
+
+        AnthropicClient::handle_stream_event(
+            "content_block_start",
+            &payload,
+            true,
+            &mut state,
+            &tx,
+        )
+        .await
+        .expect("stream event");
+
+        match rx.recv().await.expect("provider event") {
+            Ok(ProviderEvent::ToolCallStart { name, .. }) => assert_eq!(name, "read"),
+            other => panic!("expected tool call start, got {other:?}"),
         }
     }
 
@@ -2789,7 +2970,7 @@ mod tests {
     }
 
     #[test]
-    fn oauth_sessions_use_beta_messages_endpoint() {
+    fn explicit_claude_compat_uses_beta_messages_endpoint() {
         let client = AnthropicClient::new(
             test_auth_session(AuthMethod::OAuth {
                 expires_at: Utc::now(),
@@ -2797,11 +2978,149 @@ mod tests {
             ModelId::new("claude-sonnet-4-20250514"),
             None,
         );
+        let request = claude_compat_turn_request();
 
         assert_eq!(
-            client.request_url(),
+            client.request_url(&request),
             "https://api.anthropic.com/v1/messages?beta=true"
         );
+    }
+
+    #[test]
+    fn explicit_compat_target_controls_claude_mode() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let plain_request = default_turn_request();
+        let compat_request = claude_compat_turn_request();
+
+        assert_eq!(
+            client.request_url(&plain_request),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            client.request_url(&compat_request),
+            "https://api.anthropic.com/v1/messages?beta=true"
+        );
+
+        let plain_betas = client.beta_headers(&plain_request, &[]);
+        let compat_betas = client.beta_headers(&compat_request, &[]);
+        assert!(!plain_betas.iter().any(|beta| beta == CLAUDE_CODE_BETA));
+        assert!(compat_betas.iter().any(|beta| beta == CLAUDE_CODE_BETA));
+    }
+
+    #[test]
+    fn test_claude_compat_requests_use_beta_messages_endpoint_and_required_beta_headers() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = claude_compat_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+        let prepared = client.prepare_body(&body, &request);
+        let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
+        let built = client
+            .apply_request_headers(
+                http.post(client.request_url(&request)),
+                &request,
+                &prepared.extra_betas,
+                false,
+            )
+            .build()
+            .expect("request build");
+        let headers = request_headers_map(&built);
+
+        assert_eq!(
+            client.request_url(&request),
+            "https://api.anthropic.com/v1/messages?beta=true"
+        );
+        let betas = headers.get("anthropic-beta").cloned().unwrap_or_default();
+        assert!(betas.contains(CLAUDE_CODE_BETA));
+        assert!(betas.contains(OAUTH_BETA));
+    }
+
+    #[test]
+    fn oauth_sessions_without_compat_use_plain_messages_endpoint() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = default_turn_request();
+
+        assert_eq!(
+            client.request_url(&request),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn test_oauth_session_without_compat_target_uses_standard_anthropic_wire_shape() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = default_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: Some(Value::String("Use tools.".into())),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![json!({
+                "name": "bash",
+                "description": "Run shell commands",
+                "input_schema": {"type": "object"},
+            })],
+            stream: false,
+            extra_body: serde_json::Map::from_iter([(
+                "tool_choice".into(),
+                json!({"type": "tool", "name": "bash"}),
+            )]),
+        };
+
+        let prepared = client.prepare_body(&body, &request);
+        assert_eq!(
+            client.request_url(&request),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(prepared.body["system"][0]["text"], "Use tools.");
+        assert_eq!(prepared.body["system"].as_array().map(Vec::len), Some(1));
+        assert_eq!(prepared.body["tools"][0]["name"], "bash");
+        assert_eq!(prepared.body["tool_choice"]["name"], "bash");
     }
 
     #[test]
@@ -2813,33 +3132,40 @@ mod tests {
             ModelId::new("claude-sonnet-4-20250514"),
             None,
         );
+        let request = default_turn_request();
 
         assert_eq!(
-            client.request_url(),
+            client.request_url(&request),
             "https://api.anthropic.com/v1/messages"
         );
     }
 
     #[test]
-    fn oauth_beta_headers_include_claude_compat_beta() {
+    fn explicit_claude_compat_beta_headers_include_claude_compat_beta() {
         let client = AnthropicClient::new(
             test_auth_session(AuthMethod::Bearer { expires_at: None }),
             ModelId::new("claude-sonnet-4-20250514"),
             None,
         );
-        let request = TurnRequest {
-            system_prompt: None,
-            messages: vec![Message::user("hi")],
-            tools: vec![],
-            provider_request: Default::default(),
-            model: None,
-            max_tokens: None,
-            temperature: None,
-        };
+        let request = claude_compat_turn_request();
 
         let betas = client.beta_headers(&request, &[]);
         assert!(betas.iter().any(|beta| beta == CLAUDE_CODE_BETA));
         assert!(betas.iter().any(|beta| beta == OAUTH_BETA));
+    }
+
+    #[test]
+    fn non_compat_oauth_beta_headers_skip_claude_compat_beta() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::Bearer { expires_at: None }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = default_turn_request();
+
+        let betas = client.beta_headers(&request, &[]);
+        assert!(!betas.iter().any(|beta| beta == CLAUDE_CODE_BETA));
+        assert!(!betas.iter().any(|beta| beta == OAUTH_BETA));
     }
 
     #[test]
@@ -2888,7 +3214,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         assert_eq!(prepared.body["tools"][0]["name"], "Bash");
         assert_eq!(prepared.body["messages"][0]["content"][0]["name"], "Bash");
         let billing_header = prepared.body["system"][0]["text"]
@@ -2898,6 +3225,134 @@ mod tests {
         assert!(billing_header.contains("cch="));
         assert!(billing_header.ends_with(';'));
         assert_eq!(prepared.body["system"][1]["text"], CLAUDE_AGENT_IDENTIFIER);
+    }
+
+    #[test]
+    fn test_claude_compat_request_injects_billing_header_and_claude_cli_system_prompt() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = claude_compat_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: Some(Value::String("Use tools.".into())),
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("first question".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body, &request);
+        let billing_header = prepared.body["system"][0]["text"]
+            .as_str()
+            .expect("billing header text");
+        assert!(billing_header.starts_with("x-anthropic-billing-header:"));
+        assert_eq!(prepared.body["system"][1]["text"], CLAUDE_AGENT_IDENTIFIER);
+    }
+
+    #[test]
+    fn test_claude_compat_request_remaps_tool_names_in_tools_messages_and_tool_choice() {
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = claude_compat_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "assistant".into(),
+                content: WireContent::Blocks(vec![json!({
+                    "type": "tool_use",
+                    "id": "toolu_01",
+                    "name": "bash",
+                    "input": {"command": "pwd"},
+                })]),
+            }],
+            tools: vec![json!({
+                "name": "bash",
+                "description": "Run shell commands",
+                "input_schema": {"type": "object"},
+            })],
+            stream: false,
+            extra_body: serde_json::Map::from_iter([(
+                "tool_choice".into(),
+                json!({"type": "tool", "name": "bash"}),
+            )]),
+        };
+
+        let prepared = client.prepare_body(&body, &request);
+        assert_eq!(prepared.body["tools"][0]["name"], "Bash");
+        assert_eq!(prepared.body["messages"][0]["content"][0]["name"], "Bash");
+        assert_eq!(prepared.body["tool_choice"]["name"], "Bash");
+    }
+
+    #[test]
+    fn test_claude_compat_body_matches_golden_fixture_for_proxy_reference_flow() {
+        let client = AnthropicClient::new(
+            cliproxyapi_oauth_session(),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = cliproxyapi_golden_body();
+        let request = cliproxyapi_golden_turn_request();
+
+        let prepared = client.prepare_body(&body, &request);
+        let expected: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/cliproxyapi_oauth_body.json"
+        ))
+        .expect("fixture body json");
+
+        assert_eq!(normalize_golden_body(prepared.body), expected);
+    }
+
+    #[test]
+    fn test_claude_compat_headers_match_golden_fixture_for_proxy_reference_flow() {
+        let client = AnthropicClient::new(
+            cliproxyapi_oauth_session(),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let body = cliproxyapi_golden_body();
+        let request = cliproxyapi_golden_turn_request();
+        let prepared = client.prepare_body(&body, &request);
+        let http = crate::transport::anthropic_runtime_http().expect("runtime transport");
+        let built = client
+            .apply_request_headers(
+                http.post(client.request_url(&request)),
+                &request,
+                &prepared.extra_betas,
+                false,
+            )
+            .build()
+            .expect("request build");
+
+        let expected: BTreeMap<String, String> = serde_json::from_str(include_str!(
+            "../tests/fixtures/cliproxyapi_oauth_headers.json"
+        ))
+        .expect("fixture headers json");
+
+        assert_eq!(request_headers_map(&built), expected);
     }
 
     #[test]
@@ -2934,7 +3389,8 @@ mod tests {
             ]),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         assert_eq!(prepared.extra_betas, vec!["context-1m-2025-08-07"]);
         assert!(prepared.body.get("betas").is_none());
         assert!(prepared.body.get("thinking").is_none());
@@ -2986,7 +3442,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = default_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         assert_eq!(AnthropicClient::count_cache_controls(&prepared.body), 4);
         assert!(
             prepared.body["messages"][1]["content"][0]["cache_control"]
@@ -3087,13 +3544,57 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let user_id = prepared.body["metadata"]["user_id"]
             .as_str()
             .expect("claude code metadata.user_id");
         assert!(AnthropicClient::is_valid_claude_code_metadata_user_id(
             user_id
         ));
+    }
+
+    #[test]
+    fn test_api_key_sessions_leave_account_uuid_empty_even_if_claude_compat_is_requested() {
+        let mut metadata = Metadata::new();
+        metadata.insert(
+            "account_uuid".into(),
+            "22222222-2222-2222-2222-222222222222".into(),
+        );
+        let client = AnthropicClient::new(
+            test_auth_session_with_metadata(
+                AuthMethod::ApiKey {
+                    masked: "sk-ant-****".into(),
+                },
+                metadata,
+            ),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = claude_compat_turn_request();
+        let body = MessagesRequest {
+            model: "claude-sonnet-4-20250514".to_string(),
+            max_tokens: 256,
+            temperature: None,
+            system: None,
+            container: None,
+            cache_control: None,
+            context_management: None,
+            messages: vec![WireMessage {
+                role: "user".into(),
+                content: WireContent::Text("hi".into()),
+            }],
+            tools: vec![],
+            stream: false,
+            extra_body: Default::default(),
+        };
+
+        let prepared = client.prepare_body(&body, &request);
+        let user_id = prepared.body["metadata"]["user_id"]
+            .as_str()
+            .expect("claude code metadata.user_id");
+        let parsed: Value = serde_json::from_str(user_id).expect("metadata json");
+        assert_eq!(parsed["account_uuid"], "");
     }
 
     #[test]
@@ -3130,7 +3631,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let user_id = prepared.body["metadata"]["user_id"]
             .as_str()
             .expect("claude code metadata.user_id");
@@ -3172,7 +3674,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let user_id = prepared.body["metadata"]["user_id"]
             .as_str()
             .expect("claude code metadata.user_id");
@@ -3181,6 +3684,24 @@ mod tests {
             parsed["account_uuid"],
             "22222222-2222-2222-2222-222222222222"
         );
+    }
+
+    #[test]
+    fn test_anthropic_provider_id_remains_anthropic_when_claude_compat_is_enabled() {
+        assert_eq!(PROVIDER_ID.as_str(), "anthropic");
+        let client = AnthropicClient::new(
+            test_auth_session(AuthMethod::OAuth {
+                expires_at: Utc::now(),
+            }),
+            ModelId::new("claude-sonnet-4-20250514"),
+            None,
+        );
+        let request = claude_compat_turn_request();
+        assert_eq!(
+            client.request_url(&request),
+            "https://api.anthropic.com/v1/messages?beta=true"
+        );
+        assert_eq!(client.provider_id().as_str(), "anthropic");
     }
 
     #[test]
@@ -3209,7 +3730,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let billing_header = prepared.body["system"][0]["text"]
             .as_str()
             .expect("billing header text");
@@ -3251,7 +3773,8 @@ mod tests {
             extra_body: Default::default(),
         };
 
-        let prepared = client.prepare_body(&body);
+        let request = claude_compat_turn_request();
+        let prepared = client.prepare_body(&body, &request);
         let billing_header = prepared.body["system"][0]["text"]
             .as_str()
             .expect("billing header text");

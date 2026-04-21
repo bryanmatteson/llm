@@ -1,6 +1,9 @@
 use std::sync::OnceLock;
 
 use llm_core::{FrameworkError, Result};
+#[cfg(not(feature = "claude-code-emulation"))]
+use reqwest;
+#[cfg(feature = "claude-code-emulation")]
 use rquest::{
     AlpnProtos, AlpsProtos, CertCompressionAlgorithm, EmulationProvider, ExtensionType,
     Http1Builder, Http1Config, Http2Builder, Http2Config, Priority, PseudoOrder::*,
@@ -9,10 +12,20 @@ use rquest::{
 
 use crate::descriptor::PROVIDER_ID;
 
-static ANTHROPIC_AUTH_HTTP: OnceLock<std::result::Result<rquest::Client, String>> = OnceLock::new();
-static ANTHROPIC_RUNTIME_HTTP: OnceLock<std::result::Result<rquest::Client, String>> =
-    OnceLock::new();
+#[cfg(feature = "claude-code-emulation")]
+type HttpClient = rquest::Client;
+#[cfg(not(feature = "claude-code-emulation"))]
+type HttpClient = reqwest::Client;
 
+#[cfg(feature = "claude-code-emulation")]
+type HttpError = rquest::Error;
+#[cfg(not(feature = "claude-code-emulation"))]
+type HttpError = reqwest::Error;
+
+static ANTHROPIC_AUTH_HTTP: OnceLock<std::result::Result<HttpClient, String>> = OnceLock::new();
+static ANTHROPIC_RUNTIME_HTTP: OnceLock<std::result::Result<HttpClient, String>> = OnceLock::new();
+
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_CURVES: &[SslCurve] = &[
     SslCurve::X25519,
     SslCurve::SECP256R1,
@@ -22,6 +35,7 @@ const FIREFOX_CURVES: &[SslCurve] = &[
     SslCurve::FFDHE3072,
 ];
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_CIPHER_LIST: &str = concat!(
     "TLS_AES_128_GCM_SHA256:",
     "TLS_CHACHA20_POLY1305_SHA256:",
@@ -42,6 +56,7 @@ const FIREFOX_CIPHER_LIST: &str = concat!(
     "TLS_RSA_WITH_AES_256_CBC_SHA"
 );
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_SIGALGS_LIST: &str = concat!(
     "ecdsa_secp256r1_sha256:",
     "ecdsa_secp384r1_sha384:",
@@ -56,12 +71,14 @@ const FIREFOX_SIGALGS_LIST: &str = concat!(
     "rsa_pkcs1_sha1"
 );
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_CERT_COMPRESSION: &[CertCompressionAlgorithm] = &[
     CertCompressionAlgorithm::Zlib,
     CertCompressionAlgorithm::Brotli,
     CertCompressionAlgorithm::Zstd,
 ];
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_DELEGATED_CREDENTIALS: &str = concat!(
     "ecdsa_secp256r1_sha256:",
     "ecdsa_secp384r1_sha384:",
@@ -69,8 +86,10 @@ const FIREFOX_DELEGATED_CREDENTIALS: &str = concat!(
     "ecdsa_sha1"
 );
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_RECORD_SIZE_LIMIT: u16 = 0x4001;
 
+#[cfg(feature = "claude-code-emulation")]
 const FIREFOX_EXTENSION_PERMUTATION_INDICES: &[u8] = &{
     const EXTENSIONS: &[ExtensionType] = &[
         ExtensionType::SERVER_NAME,
@@ -103,8 +122,10 @@ const FIREFOX_EXTENSION_PERMUTATION_INDICES: &[u8] = &{
     indices
 };
 
+#[cfg(feature = "claude-code-emulation")]
 const CHROME_CURVES: &[SslCurve] = &[SslCurve::X25519, SslCurve::SECP256R1, SslCurve::SECP384R1];
 
+#[cfg(feature = "claude-code-emulation")]
 const CHROME_CIPHER_LIST: &str = concat!(
     "TLS_AES_128_GCM_SHA256:",
     "TLS_AES_256_GCM_SHA384:",
@@ -123,6 +144,7 @@ const CHROME_CIPHER_LIST: &str = concat!(
     "TLS_RSA_WITH_AES_256_CBC_SHA"
 );
 
+#[cfg(feature = "claude-code-emulation")]
 const CHROME_SIGALGS_LIST: &str = concat!(
     "ecdsa_secp256r1_sha256:",
     "rsa_pss_rsae_sha256:",
@@ -134,12 +156,14 @@ const CHROME_SIGALGS_LIST: &str = concat!(
     "rsa_pkcs1_sha512"
 );
 
+#[cfg(feature = "claude-code-emulation")]
 const CHROME_CERT_COMPRESSION: &[CertCompressionAlgorithm] = &[CertCompressionAlgorithm::Brotli];
 
 fn provider_error(message: impl Into<String>) -> FrameworkError {
     FrameworkError::provider(PROVIDER_ID.clone(), message.into())
 }
 
+#[cfg(feature = "claude-code-emulation")]
 fn firefox_auth_emulation() -> EmulationProvider {
     let tls = TlsConfig::builder()
         .curves(FIREFOX_CURVES)
@@ -216,7 +240,8 @@ fn firefox_auth_emulation() -> EmulationProvider {
         .build()
 }
 
-fn build_auth_http_client() -> std::result::Result<rquest::Client, rquest::Error> {
+#[cfg(feature = "claude-code-emulation")]
+fn build_auth_http_client() -> std::result::Result<HttpClient, HttpError> {
     rquest::Client::builder()
         .emulation(firefox_auth_emulation())
         .http1(firefox_http1_configuration)
@@ -224,14 +249,22 @@ fn build_auth_http_client() -> std::result::Result<rquest::Client, rquest::Error
         .build()
 }
 
+#[cfg(not(feature = "claude-code-emulation"))]
+fn build_auth_http_client() -> std::result::Result<HttpClient, HttpError> {
+    reqwest::Client::builder().build()
+}
+
+#[cfg(feature = "claude-code-emulation")]
 fn firefox_http1_configuration(mut builder: Http1Builder<'_>) {
     builder.title_case_headers(true);
 }
 
+#[cfg(feature = "claude-code-emulation")]
 fn firefox_http2_configuration(mut builder: Http2Builder<'_>) {
     builder.unknown_setting8(true);
 }
 
+#[cfg(feature = "claude-code-emulation")]
 fn chrome_runtime_emulation() -> EmulationProvider {
     let tls = TlsConfig::builder()
         .curves(CHROME_CURVES)
@@ -263,13 +296,19 @@ fn chrome_runtime_emulation() -> EmulationProvider {
         .build()
 }
 
-fn build_runtime_http_client() -> std::result::Result<rquest::Client, rquest::Error> {
+#[cfg(feature = "claude-code-emulation")]
+fn build_runtime_http_client() -> std::result::Result<HttpClient, HttpError> {
     rquest::Client::builder()
         .emulation(chrome_runtime_emulation())
         .build()
 }
 
-pub(crate) fn anthropic_auth_http() -> Result<&'static rquest::Client> {
+#[cfg(not(feature = "claude-code-emulation"))]
+fn build_runtime_http_client() -> std::result::Result<HttpClient, HttpError> {
+    reqwest::Client::builder().build()
+}
+
+pub(crate) fn anthropic_auth_http() -> Result<&'static HttpClient> {
     match ANTHROPIC_AUTH_HTTP.get_or_init(|| build_auth_http_client().map_err(|e| e.to_string())) {
         Ok(client) => Ok(client),
         Err(err) => Err(provider_error(format!(
@@ -278,7 +317,7 @@ pub(crate) fn anthropic_auth_http() -> Result<&'static rquest::Client> {
     }
 }
 
-pub(crate) fn anthropic_runtime_http() -> Result<&'static rquest::Client> {
+pub(crate) fn anthropic_runtime_http() -> Result<&'static HttpClient> {
     match ANTHROPIC_RUNTIME_HTTP
         .get_or_init(|| build_runtime_http_client().map_err(|e| e.to_string()))
     {
@@ -294,12 +333,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_fingerprinted_auth_http_client() {
+    fn builds_auth_http_client() {
         assert!(build_auth_http_client().is_ok());
     }
 
     #[test]
-    fn builds_fingerprinted_runtime_http_client() {
+    fn builds_runtime_http_client() {
         assert!(build_runtime_http_client().is_ok());
     }
 }
