@@ -1,6 +1,6 @@
 use clap::{Args, Subcommand};
 
-use llm_core::Result;
+use llm_core::{FrameworkError, Result};
 use llm_questionnaire::{
     ChoiceOption, Question, QuestionId, QuestionKind, Questionnaire, QuestionnaireId,
 };
@@ -33,11 +33,14 @@ async fn run(id: &str) -> Result<()> {
     // For now, load a built-in example questionnaire.
     let questionnaire = example_questionnaire(id)?;
 
-    eprintln!("Starting questionnaire: {}", questionnaire.title);
-    eprintln!("{}", questionnaire.description);
-    eprintln!();
-
-    let answers = run_terminal_questionnaire(&questionnaire)?;
+    let answers = match run_terminal_questionnaire(&questionnaire) {
+        Ok(answers) => answers,
+        Err(FrameworkError::Questionnaire { reason }) if reason == "cancelled by user" => {
+            // Safe exit path already printed a cancellation message.
+            return Ok(());
+        }
+        Err(err) => return Err(err),
+    };
 
     eprintln!();
     eprintln!(

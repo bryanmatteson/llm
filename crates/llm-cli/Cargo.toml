@@ -24,5 +24,6 @@ llm-store = { workspace = true }
 llm-tools = { workspace = true }
 async-trait = { workspace = true }
 clap = { workspace = true }
+inquire = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

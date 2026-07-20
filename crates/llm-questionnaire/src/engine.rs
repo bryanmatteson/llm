@@ -98,6 +98,31 @@ impl QuestionnaireRun {
         Ok(())
     }
 
+    /// True when there is a previous visible question the user can return to.
+    pub fn can_go_back(&self) -> bool {
+        self.find_previous_visible_index().is_some()
+    }
+
+    /// Move back to the previous visible question without discarding answers.
+    ///
+    /// Prior answers (including those after the new position) are kept so the
+    /// user can revisit earlier steps and return forward with their work
+    /// intact. Returns `Err` when already on the first visible question.
+    pub fn go_back(&mut self) -> Result<(), Vec<String>> {
+        let prev = match self.find_previous_visible_index() {
+            Some(idx) => idx,
+            None => return Err(vec!["already at the first question".into()]),
+        };
+        self.current_index = prev;
+        Ok(())
+    }
+
+    /// The answer already recorded for the current visible question, if any.
+    pub fn current_answer(&self) -> Option<&AnswerValue> {
+        self.resolve_current_question()
+            .and_then(|q| self.answers.get(&q.id))
+    }
+
     /// The accumulated answers so far.
     pub fn answers(&self) -> &AnswerMap {
         &self.answers
@@ -154,6 +179,33 @@ impl QuestionnaireRun {
     fn advance_past_current(&mut self) {
         if let Some(idx) = self.resolve_current_visible_index() {
             self.current_index = idx + 1;
+        }
+    }
+
+    /// Index of the nearest earlier visible question, if any.
+    ///
+    /// When the run is complete (`next_question` is `None`), searches from the
+    /// end of the question list so the last answered question can be revisited.
+    fn find_previous_visible_index(&self) -> Option<usize> {
+        let before = self
+            .resolve_current_visible_index()
+            .unwrap_or(self.questionnaire.questions.len());
+        if before == 0 {
+            return None;
+        }
+        for i in (0..before).rev() {
+            if self.is_visible_at(i) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn is_visible_at(&self, idx: usize) -> bool {
+        let q = &self.questionnaire.questions[idx];
+        match &q.condition {
+            Some(cond) => cond.evaluate(&self.answers),
+            None => true,
         }
     }
 }
@@ -437,5 +489,106 @@ mod tests {
         ]);
         let run = QuestionnaireRun::new(q).unwrap();
         assert!(run.is_complete());
+    }
+
+    // --- go_back ---
+
+    #[test]
+    fn go_back_returns_to_previous_question() {
+        let q = make_questionnaire(vec![
+            yes_no_question("q1", false),
+            yes_no_question("q2", false),
+        ]);
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        run.submit_answer(AnswerValue::YesNo(true)).unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q2");
+        assert!(run.can_go_back());
+
+        run.go_back().unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q1");
+        // Prior answers are kept.
+        assert_eq!(
+            run.current_answer(),
+            Some(&AnswerValue::YesNo(true))
+        );
+        assert!(!run.can_go_back());
+    }
+
+    #[test]
+    fn go_back_on_first_question_errors() {
+        let q = make_questionnaire(vec![yes_no_question("q1", false)]);
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        let errs = run.go_back().unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("first question")));
+    }
+
+    #[test]
+    fn go_back_skips_conditionally_hidden_questions() {
+        let q = make_questionnaire(vec![
+            yes_no_question("use_advanced", false),
+            {
+                let mut question = text_question("advanced_setting");
+                question.condition = Some(ConditionExpr::Equals {
+                    question_id: QuestionId::new("use_advanced"),
+                    value: serde_json::Value::Bool(true),
+                });
+                question
+            },
+            yes_no_question("done", false),
+        ]);
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        run.submit_answer(AnswerValue::YesNo(false)).unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "done");
+
+        run.go_back().unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "use_advanced");
+    }
+
+    #[test]
+    fn go_back_keeps_later_answers() {
+        let q = make_questionnaire(vec![
+            yes_no_question("q1", false),
+            yes_no_question("q2", false),
+            yes_no_question("q3", false),
+        ]);
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        run.submit_answer(AnswerValue::YesNo(true)).unwrap();
+        run.submit_answer(AnswerValue::YesNo(false)).unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q3");
+
+        run.go_back().unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q2");
+        assert!(run.answers().contains(&QuestionId::new("q1")));
+        assert!(run.answers().contains(&QuestionId::new("q2")));
+
+        // Back to the beginning still keeps everything.
+        run.go_back().unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q1");
+        assert_eq!(run.answers().len(), 2);
+        assert_eq!(
+            run.current_answer(),
+            Some(&AnswerValue::YesNo(true))
+        );
+    }
+
+    #[test]
+    fn go_back_from_completed_run() {
+        let q = make_questionnaire(vec![
+            yes_no_question("q1", false),
+            yes_no_question("q2", false),
+        ]);
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        run.submit_answer(AnswerValue::YesNo(true)).unwrap();
+        run.submit_answer(AnswerValue::YesNo(false)).unwrap();
+        assert!(run.is_complete());
+
+        run.go_back().unwrap();
+        assert_eq!(run.next_question().unwrap().id.as_str(), "q2");
+        assert_eq!(
+            run.current_answer(),
+            Some(&AnswerValue::YesNo(false))
+        );
+        assert!(!run.is_complete());
+        assert_eq!(run.answers().len(), 2);
     }
 }

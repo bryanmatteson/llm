@@ -79,6 +79,11 @@ impl AnswerMap {
         self.answers.insert(id, value);
     }
 
+    /// Remove and return the answer for `id`, if present.
+    pub fn remove(&mut self, id: &QuestionId) -> Option<AnswerValue> {
+        self.answers.remove(id)
+    }
+
     pub fn get(&self, id: &QuestionId) -> Option<&AnswerValue> {
         self.answers.get(id)
     }
@@ -143,6 +148,16 @@ mod tests {
         let id = QuestionId::new("q1");
         map.insert(id.clone(), AnswerValue::Choice("a".into()));
         assert_eq!(map.get(&id), Some(&AnswerValue::Choice("a".into())));
+    }
+
+    #[test]
+    fn remove_returns_previous_value() {
+        let mut map = AnswerMap::new();
+        let id = QuestionId::new("q1");
+        map.insert(id.clone(), AnswerValue::Choice("a".into()));
+        assert_eq!(map.remove(&id), Some(AnswerValue::Choice("a".into())));
+        assert!(!map.contains(&id));
+        assert_eq!(map.remove(&id), None);
     }
 
     #[test]

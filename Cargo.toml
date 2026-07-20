@@ -30,6 +30,7 @@
     base64       = "0.22"
     chrono       = { version = "0.4", features = ["serde"] }
     clap         = { version = "4", features = ["derive"] }
+    inquire      = "0.7"
     fastrand     = "2"
     getrandom    = "0.4.2"
     reqwest      = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2", "macos-system-configuration"] }
