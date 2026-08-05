@@ -6,12 +6,13 @@ use llm_core::{
     ContentBlock, FrameworkError, Message, Metadata, ModelId, Result, Role, StopReason, TokenUsage,
 };
 use llm_provider_api::{
-    LlmProviderClient, ProviderEvent, ProviderToolDescriptor, ToolSchemaAdapter, TurnRequest,
+    LlmProviderClient, ProviderEvent, ProviderToolDescriptor, ToolSchemaAdapter,
 };
 use llm_tools::{ToolApproval, ToolContext, ToolRegistry};
 
 use crate::approval::{ApprovalHandler, ApprovalRequest, ApprovalResponse};
 use crate::config::SessionConfig;
+use crate::context::prepare_turn;
 use crate::conversation::ConversationState;
 use crate::event::{EventSender, SessionEvent};
 
@@ -46,7 +47,9 @@ pub struct TurnOutcome {
     pub usage: TokenUsage,
     /// Total number of tool calls executed across all turns.
     pub tool_calls_made: usize,
-    /// Number of LLM round-trips performed.
+    /// Number of conversation turns sent to the provider. Internal
+    /// compaction requests are excluded; their token usage is still included
+    /// in [`usage`](Self::usage).
     pub turns_used: usize,
 }
 
@@ -59,26 +62,6 @@ fn emit(tx: Option<&EventSender>, event: SessionEvent) {
     if let Some(tx) = tx {
         // Best-effort: if the receiver has been dropped we silently ignore.
         let _ = tx.send(event);
-    }
-}
-
-/// Build a [`TurnRequest`] from the current conversation state and config.
-fn build_turn_request(
-    conversation: &ConversationState,
-    config: &SessionConfig,
-    tool_descriptors_json: &[serde_json::Value],
-) -> TurnRequest {
-    let mut tools = tool_descriptors_json.to_vec();
-    tools.extend(config.provider_tools.iter().cloned());
-
-    TurnRequest {
-        system_prompt: config.system_prompt.clone(),
-        messages: conversation.messages().to_vec(),
-        tools,
-        provider_request: config.provider_request.clone(),
-        model: config.model.clone(),
-        max_tokens: None,
-        temperature: None,
     }
 }
 
@@ -372,7 +355,8 @@ async fn execute_tool_calls(
 /// [`ApprovalHandler`]), appends results to the conversation, and repeats
 /// until the model produces a final text response or a limit is reached.
 pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> {
-    let tool_descriptors_json = translate_tools(ctx.tool_registry, ctx.tool_adapter);
+    let mut tool_descriptors_json = translate_tools(ctx.tool_registry, ctx.tool_adapter);
+    tool_descriptors_json.extend(ctx.config.provider_tools.iter().cloned());
 
     let mut total_tool_calls: usize = 0;
     let mut aggregated_usage = TokenUsage::default();
@@ -388,8 +372,18 @@ pub async fn run_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> 
     let _ = &last_model; // suppress unused-assignment warning
 
     for turn_index in 0..ctx.config.limits.max_turns {
-        // 1. Build the request.
-        let request = build_turn_request(ctx.conversation, ctx.config, &tool_descriptors_json);
+        // 1. Build the provider-facing context projection. This may create a
+        //    checkpoint while leaving the canonical transcript untouched.
+        let prepared = prepare_turn(
+            ctx.client,
+            ctx.conversation,
+            ctx.config,
+            &tool_descriptors_json,
+            ctx.event_tx,
+        )
+        .await?;
+        aggregated_usage.accumulate(&prepared.compaction_usage);
+        let request = prepared.request;
 
         // 2. Call the provider.
         let response = tokio::time::timeout(
@@ -576,7 +570,8 @@ impl StreamAccumulator {
 /// All tool execution, policy checking, and approval flow is shared with the
 /// non-streaming path via [`execute_tool_calls`].
 pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<TurnOutcome> {
-    let tool_descriptors_json = translate_tools(ctx.tool_registry, ctx.tool_adapter);
+    let mut tool_descriptors_json = translate_tools(ctx.tool_registry, ctx.tool_adapter);
+    tool_descriptors_json.extend(ctx.config.provider_tools.iter().cloned());
 
     let mut total_tool_calls: usize = 0;
     let mut aggregated_usage = TokenUsage::default();
@@ -588,7 +583,16 @@ pub async fn run_streaming_turn_loop(mut ctx: TurnLoopContext<'_>) -> Result<Tur
     let _ = &last_model;
 
     for turn_index in 0..ctx.config.limits.max_turns {
-        let request = build_turn_request(ctx.conversation, ctx.config, &tool_descriptors_json);
+        let prepared = prepare_turn(
+            ctx.client,
+            ctx.conversation,
+            ctx.config,
+            &tool_descriptors_json,
+            ctx.event_tx,
+        )
+        .await?;
+        aggregated_usage.accumulate(&prepared.compaction_usage);
+        let request = prepared.request;
 
         // A single timeout wraps both stream creation AND consumption so
         // the total wall-clock budget for one turn is exactly `turn_timeout`.

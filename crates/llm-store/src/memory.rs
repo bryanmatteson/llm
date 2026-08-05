@@ -199,6 +199,8 @@ mod tests {
                 provider_request: Default::default(),
             },
             messages: vec![Message::user("hello")],
+            checkpoints: Vec::new(),
+            total_usage: Default::default(),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

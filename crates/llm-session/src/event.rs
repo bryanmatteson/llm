@@ -29,6 +29,22 @@ pub enum SessionEvent {
         arguments: serde_json::Value,
     },
 
+    /// The session has crossed its configured input budget and is creating a
+    /// checkpoint for an older prefix of the transcript.
+    CompactionStarted {
+        estimated_tokens: u64,
+        compacting_messages: usize,
+    },
+
+    /// A context checkpoint was created. The canonical transcript is
+    /// unchanged; future provider requests use the checkpoint plus a recent
+    /// verbatim tail.
+    CompactionCompleted {
+        sequence: u64,
+        covered_messages: usize,
+        retained_messages: usize,
+    },
+
     /// A complete turn finished with a final assistant response.
     TurnCompleted {
         text: String,

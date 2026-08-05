@@ -167,12 +167,22 @@ impl SessionService {
             approval_handler: &approval_handler,
             event_tx: Some(&tx),
         })
-        .await?;
+        .await;
 
         // Accumulate this turn's usage into the session's lifetime total.
-        handle.total_usage.accumulate(&outcome.usage);
+        if let Ok(ref outcome) = outcome {
+            handle.total_usage.accumulate(&outcome.usage);
+        }
 
-        Ok(outcome)
+        // Persist the canonical transcript and any derived checkpoints even
+        // when the provider turn fails after making partial progress.
+        let save_result = self.session_manager.save_session(&handle).await;
+
+        match (outcome, save_result) {
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Ok(_), Err(save_error)) => Err(save_error),
+            (Err(turn_error), _) => Err(turn_error),
+        }
     }
 
     /// List the ids of all known sessions.

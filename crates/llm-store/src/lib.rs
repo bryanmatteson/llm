@@ -14,7 +14,7 @@ pub use session::SessionStore;
 
 pub use account::AccountRecord;
 pub use credential::CredentialStatus;
-pub use session::SessionSnapshot;
+pub use session::{ContextCheckpoint, ContextSummary, SessionSnapshot};
 
 // ── Re-exports: in-memory implementations ───────────────────────────
 

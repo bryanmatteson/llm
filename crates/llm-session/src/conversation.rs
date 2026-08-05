@@ -1,4 +1,5 @@
 use llm_core::{ContentBlock, Message, Role};
+use llm_store::ContextCheckpoint;
 
 /// The canonical conversation transcript.
 ///
@@ -8,12 +9,22 @@ use llm_core::{ContentBlock, Message, Role};
 #[derive(Debug, Clone, Default)]
 pub struct ConversationState {
     messages: Vec<Message>,
+    checkpoints: Vec<ContextCheckpoint>,
 }
 
 impl ConversationState {
     /// Create an empty conversation.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Restore a conversation from its canonical messages and derived
+    /// context checkpoints.
+    pub fn from_parts(messages: Vec<Message>, checkpoints: Vec<ContextCheckpoint>) -> Self {
+        Self {
+            messages,
+            checkpoints,
+        }
     }
 
     /// Append a user text message.
@@ -55,6 +66,16 @@ impl ConversationState {
     /// Borrow the full message history.
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Borrow the append-only context checkpoints derived from this history.
+    pub fn checkpoints(&self) -> &[ContextCheckpoint] {
+        &self.checkpoints
+    }
+
+    /// Append a newly-created context checkpoint.
+    pub fn append_checkpoint(&mut self, checkpoint: ContextCheckpoint) {
+        self.checkpoints.push(checkpoint);
     }
 
     /// Return the number of messages in the conversation.

@@ -27,7 +27,7 @@ use llm_tools::{ToolApproval, ToolPolicy, ToolPolicyRule};
 use serde_json::{Map, Value};
 
 use crate::config::SessionConfig;
-use crate::limits::SessionLimits;
+use crate::limits::{ContextCompaction, ContextPolicy, SessionLimits};
 
 /// Fluent builder for a [`SessionConfig`].
 pub struct SessionBuilder {
@@ -99,6 +99,28 @@ impl SessionBuilder {
     /// Set the full `SessionLimits` directly.
     pub fn limits(mut self, limits: SessionLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Set the provider-context projection policy.
+    pub fn context_policy(mut self, policy: ContextPolicy) -> Self {
+        self.limits.context = policy;
+        self
+    }
+
+    /// Enable structured compaction for a known model context window using
+    /// the default trigger, output reserve, and recent-message retention.
+    pub fn compact_context(mut self, context_window_tokens: u64) -> Self {
+        self.limits.context = ContextPolicy::Compact(ContextCompaction {
+            context_window_tokens: Some(context_window_tokens),
+            ..ContextCompaction::default()
+        });
+        self
+    }
+
+    /// Always send the complete canonical transcript.
+    pub fn full_history(mut self) -> Self {
+        self.limits.context = ContextPolicy::FullHistory;
         self
     }
 
@@ -267,5 +289,16 @@ mod tests {
 
         assert_eq!(config.tool_policy.default_approval, ToolApproval::Deny);
         assert_eq!(config.tool_policy.rules.len(), 1);
+    }
+
+    #[test]
+    fn structured_compaction_can_be_enabled_from_builder() {
+        let config = SessionBuilder::new("test").compact_context(32_000).build();
+        match config.limits.context {
+            ContextPolicy::Compact(compaction) => {
+                assert_eq!(compaction.context_window_tokens, Some(32_000));
+            }
+            ContextPolicy::FullHistory => panic!("expected compact context policy"),
+        }
     }
 }

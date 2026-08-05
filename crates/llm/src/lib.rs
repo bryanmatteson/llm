@@ -84,9 +84,9 @@ pub use llm_gui_api as gui;
 // into submodules.
 
 pub use llm_core::{
-    FrameworkError, Message, Metadata, ModelId, ProviderId, Result, SessionConfig, SessionId,
-    SessionLimits, SkillId, StopReason, TokenUsage, ToolApproval, ToolId, ToolPolicy,
-    ToolPolicyBuilder,
+    ContextCompaction, ContextPolicy, FrameworkError, Message, Metadata, ModelId, ProviderId,
+    Result, SessionConfig, SessionId, SessionLimits, SkillId, StopReason, TokenUsage, ToolApproval,
+    ToolId, ToolPolicy, ToolPolicyBuilder,
 };
 
 pub use llm_app::{AppBuilder, LlmContext, SkillService};

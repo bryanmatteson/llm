@@ -47,6 +47,23 @@ pub async fn render_session_events(rx: &mut EventReceiver) {
                 writeln!(err, "[approval required for tool: {tool_name}]").ok();
             }
 
+            SessionEvent::CompactionStarted {
+                compacting_messages,
+                ..
+            } => {
+                writeln!(err, "[compacting {compacting_messages} older messages]").ok();
+            }
+
+            SessionEvent::CompactionCompleted {
+                retained_messages, ..
+            } => {
+                writeln!(
+                    err,
+                    "[context compacted; retained {retained_messages} recent messages]"
+                )
+                .ok();
+            }
+
             SessionEvent::TurnCompleted { text, model, usage } => {
                 // If streaming deltas were received, `text` duplicates what
                 // was already printed.  Only print it when no deltas arrived.

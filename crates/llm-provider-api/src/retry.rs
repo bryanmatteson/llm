@@ -44,7 +44,7 @@ pub struct RetryingClient<C> {
     config: RetryConfig,
 }
 
-impl<C: LlmProviderClient> RetryingClient<C> {
+impl<C> RetryingClient<C> {
     /// Wrap `client` with the default retry configuration (2 retries,
     /// 500 ms base backoff).
     pub fn new(client: C) -> Self {
@@ -67,6 +67,14 @@ impl<C: LlmProviderClient> RetryingClient<C> {
 impl<C: LlmProviderClient> LlmProviderClient for RetryingClient<C> {
     fn provider_id(&self) -> &ProviderId {
         self.inner.provider_id()
+    }
+
+    fn context_window(&self) -> Option<u64> {
+        self.inner.context_window()
+    }
+
+    fn estimate_input_tokens(&self, request: &TurnRequest) -> Option<u64> {
+        self.inner.estimate_input_tokens(request)
     }
 
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
@@ -122,6 +130,14 @@ impl<C: LlmProviderClient> LlmProviderClient for RetryingClient<C> {
 impl<C: LlmProviderClient> LlmProviderClient for RetryingClient<Arc<C>> {
     fn provider_id(&self) -> &ProviderId {
         self.inner.provider_id()
+    }
+
+    fn context_window(&self) -> Option<u64> {
+        self.inner.context_window()
+    }
+
+    fn estimate_input_tokens(&self, request: &TurnRequest) -> Option<u64> {
+        self.inner.estimate_input_tokens(request)
     }
 
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {
@@ -195,6 +211,14 @@ mod tests {
             &self.provider_id
         }
 
+        fn context_window(&self) -> Option<u64> {
+            Some(32_000)
+        }
+
+        fn estimate_input_tokens(&self, _request: &TurnRequest) -> Option<u64> {
+            Some(123)
+        }
+
         async fn send_turn(&self, _request: &TurnRequest) -> Result<TurnResponse> {
             let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
             if attempt < self.fail_count {
@@ -251,6 +275,34 @@ mod tests {
         let result = client.send_turn(&request).await;
         assert!(result.is_ok());
         assert_eq!(client.inner.attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn forwards_context_metadata_for_owned_and_shared_clients() {
+        let owned = RetryingClient::new(FlakyClient {
+            provider_id: ProviderId::new("test"),
+            fail_count: 0,
+            attempts: AtomicU32::new(0),
+        });
+        let request = TurnRequest {
+            system_prompt: None,
+            messages: vec![],
+            tools: vec![],
+            provider_request: Default::default(),
+            model: None,
+            max_tokens: None,
+            temperature: None,
+        };
+        assert_eq!(owned.context_window(), Some(32_000));
+        assert_eq!(owned.estimate_input_tokens(&request), Some(123));
+
+        let shared = RetryingClient::new(Arc::new(FlakyClient {
+            provider_id: ProviderId::new("test"),
+            fail_count: 0,
+            attempts: AtomicU32::new(0),
+        }));
+        assert_eq!(shared.context_window(), Some(32_000));
+        assert_eq!(shared.estimate_input_tokens(&request), Some(123));
     }
 
     #[tokio::test]

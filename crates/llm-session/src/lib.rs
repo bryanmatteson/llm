@@ -1,6 +1,7 @@
 pub mod approval;
 pub mod builder;
 pub mod config;
+mod context;
 pub mod conversation;
 pub mod event;
 pub mod limits;
@@ -14,6 +15,6 @@ pub use builder::SessionBuilder;
 pub use config::SessionConfig;
 pub use conversation::ConversationState;
 pub use event::{EventReceiver, EventSender, SessionEvent, event_channel};
-pub use limits::SessionLimits;
+pub use limits::{ContextCompaction, ContextPolicy, SessionLimits};
 pub use manager::{DefaultSessionManager, SessionHandle, SessionManager};
 pub use mediator::{TurnLoopContext, TurnOutcome, run_streaming_turn_loop, run_turn_loop};

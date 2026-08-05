@@ -37,6 +37,20 @@ pub trait LlmProviderClient: Send + Sync {
     /// Returns the provider identifier for this client.
     fn provider_id(&self) -> &ProviderId;
 
+    /// Return the active model's context window when it is known without a
+    /// network request. Session compaction can also be configured with an
+    /// explicit window when a client cannot provide one.
+    fn context_window(&self) -> Option<u64> {
+        None
+    }
+
+    /// Return an exact or provider-native input-token estimate when
+    /// available. The session layer uses a conservative local estimate when
+    /// this returns `None`.
+    fn estimate_input_tokens(&self, _request: &TurnRequest) -> Option<u64> {
+        None
+    }
+
     /// Send a complete turn (non-streaming) and wait for the full response.
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse>;
 
@@ -54,6 +68,14 @@ pub trait LlmProviderClient: Send + Sync {
 impl LlmProviderClient for Box<dyn LlmProviderClient> {
     fn provider_id(&self) -> &ProviderId {
         (**self).provider_id()
+    }
+
+    fn context_window(&self) -> Option<u64> {
+        (**self).context_window()
+    }
+
+    fn estimate_input_tokens(&self, request: &TurnRequest) -> Option<u64> {
+        (**self).estimate_input_tokens(request)
     }
 
     async fn send_turn(&self, request: &TurnRequest) -> Result<TurnResponse> {

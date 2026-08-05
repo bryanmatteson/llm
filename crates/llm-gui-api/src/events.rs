@@ -157,6 +157,20 @@ mod tests {
     }
 
     #[test]
+    fn adapt_compaction_completed() {
+        let event = json!({
+            "CompactionCompleted": {
+                "sequence": 2,
+                "covered_messages": 24,
+                "retained_messages": 12
+            }
+        });
+        let dto = SessionEventAdapter::adapt_event(&event);
+        assert_eq!(dto.kind, "compaction_completed");
+        assert_eq!(dto.data["sequence"], 2);
+    }
+
+    #[test]
     fn adapt_unknown_shape() {
         let event = json!("just a string");
         let dto = SessionEventAdapter::adapt_event(&event);

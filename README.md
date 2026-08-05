@@ -198,13 +198,33 @@ use llm::store::InMemorySessionStore;
 let store = Arc::new(InMemorySessionStore::new());
 let manager = DefaultSessionManager::new(store);
 
-let handle = manager.create_session(config).await?;
+let mut handle = manager.create_session(config).await?;
 
 // Reload later -- full config (tool policy, limits, system prompt) is restored
 let restored = manager.get_session(&handle.id).await?;
 
 let ids = manager.list_sessions().await?;
 ```
+
+### Context Compaction
+
+Full history is the default. Enable structured compaction when the model's
+context window is known:
+
+```rust,ignore
+let config = SessionBuilder::new("openai")
+    .model("gpt-4o")
+    .compact_context(128_000)
+    .build();
+```
+
+When the estimated input reaches 80% of the usable window, `llm-session`
+creates a structured checkpoint for older complete turns and retains the most
+recent messages verbatim. Tool-use/result groups are never split. The original
+messages and append-only checkpoints are both persisted, so compaction changes
+only the provider-facing context projection. Use `ContextPolicy::Compact` with
+a custom `ContextCompaction` value to tune the trigger, response reserve,
+recent-message count, and checkpoint size.
 
 ### Run the Turn Loop
 
@@ -224,6 +244,9 @@ let outcome = run_turn_loop(TurnLoopContext {
     approval_handler: &AutoApproveHandler,
     event_tx: Some(&tx),
 }).await?;
+
+handle.total_usage.accumulate(&outcome.usage);
+manager.save_session(&handle).await?;
 
 println!("{}", outcome.final_text);
 println!("turns={} tools={} tokens={}",

@@ -34,8 +34,8 @@ mod tests {
 
     use llm_auth::{AuthCompletion, AuthMethod, AuthProvider, AuthSession, AuthStart, TokenPair};
     use llm_core::{
-        FrameworkError, Metadata, ModelDescriptor, ModelId, ProviderCapability, ProviderDescriptor,
-        ProviderId, Result,
+        FrameworkError, Message, Metadata, ModelDescriptor, ModelId, ProviderCapability,
+        ProviderDescriptor, ProviderId, Result, StopReason, TokenUsage,
     };
     use llm_provider_api::{
         LlmProviderClient, ProviderEvent, ProviderToolCall, ProviderToolDescriptor,
@@ -115,7 +115,15 @@ mod tests {
         }
 
         async fn send_turn(&self, _request: &TurnRequest) -> Result<TurnResponse> {
-            Err(FrameworkError::unsupported("stub"))
+            Ok(TurnResponse {
+                messages: vec![Message::assistant("stub response")],
+                stop_reason: StopReason::EndTurn,
+                model: ModelId::new("stub-model"),
+                usage: TokenUsage {
+                    input_tokens: 4,
+                    output_tokens: 2,
+                },
+            })
         }
 
         async fn stream_turn(
@@ -317,5 +325,39 @@ mod tests {
         assert!(prompt.starts_with("Be concise."));
         assert!(prompt.contains("The following skills are available:"));
         assert!(prompt.contains("- pdf: Extract text from PDFs."));
+    }
+
+    #[tokio::test]
+    async fn send_message_persists_the_completed_transcript() {
+        use llm_store::{InMemorySessionStore, SessionStore};
+
+        let store = Arc::new(InMemorySessionStore::new());
+        let ctx = AppBuilder::new()
+            .with_session_store(store.clone())
+            .register_provider(make_registration("alpha"))
+            .build()
+            .unwrap();
+        let auth = stub_auth_session("alpha");
+        let (handle, _tx, _rx) = ctx
+            .sessions
+            .create_session(
+                &ProviderId::new("alpha"),
+                &auth,
+                llm_core::SessionConfig::for_provider("alpha"),
+            )
+            .await
+            .unwrap();
+
+        ctx.sessions
+            .send_message(&handle.id, &auth, "persist this")
+            .await
+            .unwrap();
+        let snapshot = store.load_session(&handle.id).await.unwrap().unwrap();
+
+        assert_eq!(snapshot.messages.len(), 2);
+        assert_eq!(snapshot.messages[0].text_content(), "persist this");
+        assert_eq!(snapshot.messages[1].text_content(), "stub response");
+        assert_eq!(snapshot.total_usage.input_tokens, 4);
+        assert_eq!(snapshot.total_usage.output_tokens, 2);
     }
 }

@@ -190,17 +190,26 @@ async fn interactive_loop(
         })
         .await;
 
+        if let Ok(ref completed) = outcome {
+            handle.total_usage.accumulate(&completed.usage);
+        }
+        let save_result = ctx.session_manager.save_session(&handle).await;
+
         // Drop sender so the render task can finish.
         drop(tx);
         let _ = render_handle.await;
 
         match outcome {
             Ok(_outcome) => {
+                save_result?;
                 // The render task already printed the assistant response via
                 // events; we just print a blank line separator.
                 eprintln!();
             }
             Err(e) => {
+                if let Err(save_error) = save_result {
+                    eprintln!("error saving session: {save_error}");
+                }
                 eprintln!("error: {e}");
             }
         }
