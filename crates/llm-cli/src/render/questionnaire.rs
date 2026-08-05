@@ -4,8 +4,12 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use inquire::Select;
 use llm_core::Result;
 use llm_questionnaire::{
-    AnswerMap, AnswerValue, QuestionKind, Questionnaire, QuestionnaireRun, SectionId,
+    AnswerMap, AnswerValue, Question, QuestionKind, Questionnaire, QuestionnaireRun, SectionId,
 };
+
+const SELECT_CONTROLS: &str = "Type a shortcut + Enter · ↑/↓ move · Enter select · Esc cancel";
+const MULTI_SELECT_CONTROLS: &str =
+    "Type a number + Space · ↑/↓ move · Space toggle · Enter confirm · Esc cancel";
 
 /// Action chosen at a prompt instead of (or before) submitting an answer.
 #[derive(Debug, Clone, PartialEq)]
@@ -21,6 +25,7 @@ enum PromptAction {
 #[derive(Debug, Clone)]
 enum MenuItem {
     Choice {
+        shortcut: usize,
         label: String,
         value: String,
     },
@@ -34,12 +39,14 @@ enum MenuItem {
 impl fmt::Display for MenuItem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Choice { label, .. } => write!(f, "{label}"),
-            Self::Yes => write!(f, "Yes"),
-            Self::No => write!(f, "No"),
-            Self::Continue => write!(f, "Continue"),
-            Self::Back => write!(f, "← Back"),
-            Self::Quit => write!(f, "Cancel"),
+            Self::Choice {
+                shortcut, label, ..
+            } => write!(f, "{shortcut}  {label}"),
+            Self::Yes => write!(f, "1  Yes"),
+            Self::No => write!(f, "2  No"),
+            Self::Continue => write!(f, "1  Continue"),
+            Self::Back => write!(f, "B  ← Back"),
+            Self::Quit => write!(f, "Q  Cancel"),
         }
     }
 }
@@ -47,9 +54,10 @@ impl fmt::Display for MenuItem {
 /// Drive a [`Questionnaire`] interactively on the terminal, returning the
 /// collected answers.
 ///
-/// On a TTY, choice-like prompts use ↑/↓ + Enter. **← Back** and **Cancel**
-/// appear as selectable rows. Going back keeps all answers so earlier work is
-/// still there when the user returns forward.
+/// On a TTY, choice-like prompts support both numbered shortcuts and ↑/↓ +
+/// Enter. **← Back** and **Cancel** appear as selectable rows. Going back
+/// keeps all answers so earlier work is still there when the user returns
+/// forward.
 ///
 /// Non-TTY / scripted input falls back to line prompts (`/back`, `/quit`).
 pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<AnswerMap> {
@@ -60,12 +68,14 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
     let stdin = io::stdin();
     let mut reader = stdin.lock();
 
-    print_welcome(questionnaire, interactive);
+    print_welcome(questionnaire);
 
     // Track the last section we printed a header for.
     let mut last_section_id: Option<SectionId> = None;
 
     while let Some(question) = run.next_question().cloned() {
+        let prompt_label = question_prompt_label(&run, &question);
+
         // Print section header if we've entered a new section.
         if let Some(section) = run.current_section() {
             let sid = &section.id;
@@ -88,8 +98,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
 
         // Handle info items: display and wait for acknowledgment.
         if let QuestionKind::Info { content } = &question.kind {
-            if !question.label.is_empty() {
-                eprintln!("  {}", question.label);
+            if !prompt_label.is_empty() {
+                eprintln!("{prompt_label}");
             }
             for line in content.lines() {
                 eprintln!("    {line}");
@@ -97,9 +107,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
             eprintln!();
             match prompt_continue(run.can_go_back(), interactive, &mut reader)? {
                 PromptAction::Continue => {
-                    run.advance_info().map_err(|errs| {
-                        llm_core::FrameworkError::questionnaire(errs.join("; "))
-                    })?;
+                    run.advance_info()
+                        .map_err(|errs| llm_core::FrameworkError::questionnaire(errs.join("; ")))?;
                 }
                 PromptAction::Back => {
                     if let Err(msg) = apply_go_back(&mut run, &mut last_section_id) {
@@ -112,10 +121,6 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
             continue;
         }
 
-        if let Some(help) = &question.help_text {
-            eprintln!("  ({help})");
-        }
-
         let action = match &question.kind {
             QuestionKind::Choice { options, default } => {
                 let effective_default = existing
@@ -124,7 +129,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
                     .map(str::to_owned)
                     .or_else(|| default.clone());
                 prompt_choice(
-                    &question.label,
+                    &prompt_label,
+                    question.help_text.as_deref(),
                     options,
                     effective_default.as_deref(),
                     run.can_go_back(),
@@ -138,7 +144,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
                     .and_then(AnswerValue::as_yes_no)
                     .or(*default);
                 prompt_yes_no(
-                    &question.label,
+                    &prompt_label,
+                    question.help_text.as_deref(),
                     effective_default,
                     run.can_go_back(),
                     interactive,
@@ -157,7 +164,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
                     })
                     .or_else(|| default.clone());
                 prompt_text(
-                    &question.label,
+                    &prompt_label,
+                    question.help_text.as_deref(),
                     placeholder.as_deref(),
                     effective_default.as_deref(),
                     run.can_go_back(),
@@ -170,7 +178,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
                     .and_then(AnswerValue::as_number)
                     .or(*default);
                 prompt_number(
-                    &question.label,
+                    &prompt_label,
+                    question.help_text.as_deref(),
                     *min,
                     *max,
                     effective_default,
@@ -185,7 +194,8 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
                     .map(|s| s.to_vec())
                     .or_else(|| default.clone());
                 prompt_multi_select(
-                    &question.label,
+                    &prompt_label,
+                    question.help_text.as_deref(),
                     options,
                     effective_default.as_deref(),
                     run.can_go_back(),
@@ -218,7 +228,7 @@ pub fn run_terminal_questionnaire(questionnaire: &Questionnaire) -> Result<Answe
     Ok(run.answers().clone())
 }
 
-fn print_welcome(questionnaire: &Questionnaire, interactive: bool) {
+fn print_welcome(questionnaire: &Questionnaire) {
     if !questionnaire.title.is_empty() {
         eprintln!("{}", questionnaire.title);
     }
@@ -226,14 +236,32 @@ fn print_welcome(questionnaire: &Questionnaire, interactive: bool) {
         eprintln!("{}", questionnaire.description);
     }
     eprintln!();
-    if interactive {
-        eprintln!("Use ↑/↓ and Enter to choose. Select ← Back to revisit a previous answer.");
-        eprintln!("Your answers are kept when you go back. Select Cancel or press Esc to exit.");
+}
+
+fn question_prompt_label(run: &QuestionnaireRun, question: &Question) -> String {
+    let visible: Vec<&Question> = run
+        .questionnaire()
+        .questions
+        .iter()
+        .filter(|candidate| {
+            candidate
+                .condition
+                .as_ref()
+                .is_none_or(|condition| condition.evaluate(run.answers()))
+        })
+        .collect();
+    let current = visible
+        .iter()
+        .position(|candidate| candidate.id == question.id)
+        .map(|index| index + 1)
+        .unwrap_or(1);
+    let total = visible.len().max(current);
+
+    if question.label.is_empty() {
+        format!("Question {current} of {total}")
     } else {
-        eprintln!("Type /back to revisit the previous question (answers are kept).");
-        eprintln!("Type /quit or press Ctrl-D to exit without saving.");
+        format!("[{current}/{total}] {}", question.label)
     }
-    eprintln!();
 }
 
 fn nav_hint(can_go_back: bool) -> &'static str {
@@ -247,9 +275,7 @@ fn nav_hint(can_go_back: bool) -> &'static str {
 fn abort_questionnaire() -> Result<AnswerMap> {
     eprintln!();
     eprintln!("Questionnaire cancelled. No answers were saved.");
-    Err(llm_core::FrameworkError::questionnaire(
-        "cancelled by user",
-    ))
+    Err(llm_core::FrameworkError::questionnaire("cancelled by user"))
 }
 
 fn apply_go_back(
@@ -296,28 +322,40 @@ fn read_line(reader: &mut impl BufRead) -> Result<Option<String>> {
 
 fn map_inquire_error(err: inquire::InquireError) -> Result<PromptAction> {
     match err {
-        inquire::InquireError::OperationCanceled
-        | inquire::InquireError::OperationInterrupted => Ok(PromptAction::Quit),
+        inquire::InquireError::OperationCanceled | inquire::InquireError::OperationInterrupted => {
+            Ok(PromptAction::Quit)
+        }
         other => Err(llm_core::FrameworkError::questionnaire(other.to_string())),
     }
 }
 
-fn run_select(prompt: &str, items: Vec<MenuItem>, starting: usize) -> Result<PromptAction> {
+fn run_select(
+    prompt: &str,
+    help_text: Option<&str>,
+    items: Vec<MenuItem>,
+    starting: usize,
+) -> Result<PromptAction> {
     let starting = starting.min(items.len().saturating_sub(1));
+    let help = prompt_help(help_text, SELECT_CONTROLS);
     match Select::new(prompt, items)
         .with_starting_cursor(starting)
-        .with_help_message("↑/↓ move · Enter select · Esc cancel")
+        .with_help_message(&help)
         .prompt()
     {
-        Ok(MenuItem::Choice { value, .. }) => {
-            Ok(PromptAction::Answer(AnswerValue::Choice(value)))
-        }
+        Ok(MenuItem::Choice { value, .. }) => Ok(PromptAction::Answer(AnswerValue::Choice(value))),
         Ok(MenuItem::Yes) => Ok(PromptAction::Answer(AnswerValue::YesNo(true))),
         Ok(MenuItem::No) => Ok(PromptAction::Answer(AnswerValue::YesNo(false))),
         Ok(MenuItem::Continue) => Ok(PromptAction::Continue),
         Ok(MenuItem::Back) => Ok(PromptAction::Back),
         Ok(MenuItem::Quit) => Ok(PromptAction::Quit),
         Err(err) => map_inquire_error(err),
+    }
+}
+
+fn prompt_help(help_text: Option<&str>, controls: &str) -> String {
+    match help_text {
+        Some(help) if !help.is_empty() => format!("{help} · {controls}"),
+        _ => controls.to_owned(),
     }
 }
 
@@ -340,7 +378,7 @@ fn prompt_continue(
     if interactive {
         let mut items = vec![MenuItem::Continue];
         append_nav_items(&mut items, can_go_back);
-        return run_select("Next", items, 0);
+        return run_select("Next", None, items, 0);
     }
 
     loop {
@@ -363,6 +401,7 @@ fn prompt_continue(
 
 fn prompt_choice(
     label: &str,
+    help_text: Option<&str>,
     options: &[llm_questionnaire::ChoiceOption],
     default: Option<&str>,
     can_go_back: bool,
@@ -372,12 +411,14 @@ fn prompt_choice(
     if interactive {
         let mut items: Vec<MenuItem> = options
             .iter()
-            .map(|opt| {
+            .enumerate()
+            .map(|(index, opt)| {
                 let label = match &opt.description {
                     Some(desc) => format!("{} — {desc}", opt.label),
                     None => opt.label.clone(),
                 };
                 MenuItem::Choice {
+                    shortcut: index + 1,
                     label,
                     value: opt.value.clone(),
                 }
@@ -387,11 +428,14 @@ fn prompt_choice(
             .and_then(|d| options.iter().position(|o| o.value == d))
             .unwrap_or(0);
         append_nav_items(&mut items, can_go_back);
-        return run_select(label, items, starting);
+        return run_select(label, help_text, items, starting);
     }
 
     loop {
         eprintln!("{label}");
+        if let Some(help) = help_text {
+            eprintln!("  {help}");
+        }
         for (i, opt) in options.iter().enumerate() {
             let marker = if default == Some(opt.value.as_str()) {
                 " (default)"
@@ -447,6 +491,7 @@ fn prompt_choice(
 
 fn prompt_yes_no(
     label: &str,
+    help_text: Option<&str>,
     default: Option<bool>,
     can_go_back: bool,
     interactive: bool,
@@ -459,7 +504,7 @@ fn prompt_yes_no(
             _ => 0,
         };
         append_nav_items(&mut items, can_go_back);
-        return run_select(label, items, starting);
+        return run_select(label, help_text, items, starting);
     }
 
     loop {
@@ -468,7 +513,11 @@ fn prompt_yes_no(
             Some(false) => " [y/N]",
             None => " [y/n]",
         };
-        eprint!("{label}{hint}{}: ", nav_hint(can_go_back));
+        eprintln!("{label}");
+        if let Some(help) = help_text {
+            eprintln!("  {help}");
+        }
+        eprint!("Answer{hint}{}: ", nav_hint(can_go_back));
         io::stderr().flush().ok();
 
         let Some(input) = read_line(reader)? else {
@@ -501,6 +550,7 @@ fn prompt_yes_no(
 
 fn prompt_text(
     label: &str,
+    help_text: Option<&str>,
     placeholder: Option<&str>,
     default: Option<&str>,
     can_go_back: bool,
@@ -508,7 +558,11 @@ fn prompt_text(
 ) -> Result<PromptAction> {
     let hint = placeholder.map(|p| format!(" ({p})")).unwrap_or_default();
     let default_hint = default.map(|d| format!(" [{d}]")).unwrap_or_default();
-    eprint!("{label}{hint}{default_hint}{}: ", nav_hint(can_go_back));
+    eprintln!("{label}{hint}{default_hint}");
+    if let Some(help) = help_text {
+        eprintln!("  {help}");
+    }
+    eprint!("Answer{}: ", nav_hint(can_go_back));
     io::stderr().flush().ok();
 
     let Some(input) = read_line(reader)? else {
@@ -535,6 +589,7 @@ fn prompt_text(
 
 fn prompt_number(
     label: &str,
+    help_text: Option<&str>,
     min: Option<f64>,
     max: Option<f64>,
     default: Option<f64>,
@@ -551,7 +606,11 @@ fn prompt_number(
         let default_hint = default
             .map(|d| format!(" (default: {d})"))
             .unwrap_or_default();
-        eprint!("{label}{range_hint}{default_hint}{}: ", nav_hint(can_go_back));
+        eprintln!("{label}{range_hint}{default_hint}");
+        if let Some(help) = help_text {
+            eprintln!("  {help}");
+        }
+        eprint!("Answer{}: ", nav_hint(can_go_back));
         io::stderr().flush().ok();
 
         let Some(input) = read_line(reader)? else {
@@ -596,6 +655,7 @@ fn prompt_number(
 
 fn prompt_multi_select(
     label: &str,
+    help_text: Option<&str>,
     options: &[llm_questionnaire::ChoiceOption],
     default: Option<&[String]>,
     can_go_back: bool,
@@ -607,9 +667,10 @@ fn prompt_multi_select(
 
         let labels: Vec<String> = options
             .iter()
-            .map(|o| match &o.description {
-                Some(desc) => format!("{} — {desc}", o.label),
-                None => o.label.clone(),
+            .enumerate()
+            .map(|(index, o)| match &o.description {
+                Some(desc) => format!("{}  {} — {desc}", index + 1, o.label),
+                None => format!("{}  {}", index + 1, o.label),
             })
             .collect();
 
@@ -629,9 +690,11 @@ fn prompt_multi_select(
             })
             .unwrap_or_default();
 
+        let help = prompt_help(help_text, MULTI_SELECT_CONTROLS);
         let selected_labels = match MultiSelect::new(label, labels.clone())
             .with_default(&defaults)
-            .with_help_message("↑/↓ move · Space toggle · Enter confirm · Esc cancel")
+            .with_keep_filter(false)
+            .with_help_message(&help)
             .prompt()
         {
             Ok(v) => v,
@@ -650,12 +713,8 @@ fn prompt_multi_select(
 
         // Offer ← Back as an explicit choice after the selection is confirmed.
         if can_go_back {
-            let nav = vec![
-                MenuItem::Continue,
-                MenuItem::Back,
-                MenuItem::Quit,
-            ];
-            match run_select("Continue with this selection?", nav, 0)? {
+            let nav = vec![MenuItem::Continue, MenuItem::Back, MenuItem::Quit];
+            match run_select("Continue with this selection?", None, nav, 0)? {
                 PromptAction::Continue => {
                     Ok(PromptAction::Answer(AnswerValue::MultiSelect(values)))
                 }
@@ -666,6 +725,9 @@ fn prompt_multi_select(
         }
     } else {
         eprintln!("{label}");
+        if let Some(help) = help_text {
+            eprintln!("  {help}");
+        }
         for (i, opt) in options.iter().enumerate() {
             let marker = default
                 .map(|d| d.iter().any(|v| v == &opt.value))
@@ -780,34 +842,31 @@ mod tests {
         assert_eq!(parse_nav_command("quit"), Some(PromptAction::Quit));
         assert_eq!(parse_nav_command("yes"), None);
         assert_eq!(parse_nav_command_strict("quit"), None);
-        assert_eq!(
-            parse_nav_command_strict("/quit"),
-            Some(PromptAction::Quit)
-        );
+        assert_eq!(parse_nav_command_strict("/quit"), Some(PromptAction::Quit));
     }
 
     #[test]
     fn yes_no_accepts_back_and_quit() {
         let mut reader = Cursor::new("back\n");
-        let action = prompt_yes_no("Go?", Some(true), true, false, &mut reader).unwrap();
+        let action = prompt_yes_no("Go?", None, Some(true), true, false, &mut reader).unwrap();
         assert_eq!(action, PromptAction::Back);
 
         let mut reader = Cursor::new("/quit\n");
-        let action = prompt_yes_no("Go?", Some(true), true, false, &mut reader).unwrap();
+        let action = prompt_yes_no("Go?", None, Some(true), true, false, &mut reader).unwrap();
         assert_eq!(action, PromptAction::Quit);
     }
 
     #[test]
     fn eof_is_quit() {
         let mut reader = Cursor::new("");
-        let action = prompt_yes_no("Go?", Some(true), false, false, &mut reader).unwrap();
+        let action = prompt_yes_no("Go?", None, Some(true), false, false, &mut reader).unwrap();
         assert_eq!(action, PromptAction::Quit);
     }
 
     #[test]
     fn text_allows_bare_quit_as_answer() {
         let mut reader = Cursor::new("quit\n");
-        let action = prompt_text("Notes", None, None, true, &mut reader).unwrap();
+        let action = prompt_text("Notes", None, None, None, true, &mut reader).unwrap();
         assert_eq!(
             action,
             PromptAction::Answer(AnswerValue::Text(Some("quit".into())))
@@ -820,7 +879,7 @@ mod tests {
         let q = sample_questionnaire();
         let mut run = QuestionnaireRun::new(q).unwrap();
 
-        let a1 = prompt_yes_no("First?", Some(true), false, false, &mut reader).unwrap();
+        let a1 = prompt_yes_no("First?", None, Some(true), false, false, &mut reader).unwrap();
         match a1 {
             PromptAction::Answer(v) => run.submit_answer(v).unwrap(),
             other => panic!("expected answer, got {other:?}"),
@@ -840,15 +899,21 @@ mod tests {
                 description: None,
             },
         ];
-        let back = prompt_choice("Second?", &options, Some("a"), true, false, &mut reader).unwrap();
+        let back = prompt_choice(
+            "Second?",
+            None,
+            &options,
+            Some("a"),
+            true,
+            false,
+            &mut reader,
+        )
+        .unwrap();
         assert_eq!(back, PromptAction::Back);
 
         run.go_back().unwrap();
         assert_eq!(run.next_question().unwrap().id.as_str(), "q1");
-        assert_eq!(
-            run.current_answer(),
-            Some(&AnswerValue::YesNo(true))
-        );
+        assert_eq!(run.current_answer(), Some(&AnswerValue::YesNo(true)));
         // Later work is still present even after going back.
         // (q2 was never answered in this scenario — answer q2 first.)
     }
@@ -865,9 +930,33 @@ mod tests {
         run.go_back().unwrap();
         assert_eq!(run.next_question().unwrap().id.as_str(), "q1");
         assert_eq!(run.answers().len(), 2);
-        assert_eq!(
-            run.answers().choice(&QuestionId::new("q2")),
-            Some("b")
-        );
+        assert_eq!(run.answers().choice(&QuestionId::new("q2")), Some("b"));
+    }
+
+    #[test]
+    fn interactive_rows_expose_filterable_shortcuts() {
+        let item = MenuItem::Choice {
+            shortcut: 2,
+            label: "Anthropic".into(),
+            value: "anthropic".into(),
+        };
+        let rendered = item.to_string();
+
+        assert_eq!(rendered, "2  Anthropic");
+        assert!(Select::<MenuItem>::DEFAULT_SCORER("2", &item, &rendered, 0).is_some());
+        assert_eq!(MenuItem::Back.to_string(), "B  ← Back");
+        assert_eq!(MenuItem::Quit.to_string(), "Q  Cancel");
+    }
+
+    #[test]
+    fn prompt_label_tracks_progress() {
+        let q = sample_questionnaire();
+        let mut run = QuestionnaireRun::new(q).unwrap();
+        let first = run.next_question().unwrap();
+        assert_eq!(question_prompt_label(&run, first), "[1/2] First?");
+
+        run.submit_answer(AnswerValue::YesNo(true)).unwrap();
+        let second = run.next_question().unwrap();
+        assert_eq!(question_prompt_label(&run, second), "[2/2] Second?");
     }
 }
